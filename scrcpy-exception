@@ -1,0 +1,34 @@
+scrcpy -s 192.168.0.193:5555
+scrcpy 2.7 <https://github.com/Genymobile/scrcpy>
+INFO: ADB device found:
+INFO:           (usb)  1B101FDF6000LQ                  device  Pixel_6
+INFO:     --> (tcpip)  192.168.0.193:5555              device  Raspberry_Pi_4
+/usr/local/share/scrcpy/scrcpy-server: 1 file pushed. 1.9 MB/s (71200 bytes in 0.035s)
+[server] INFO: Device: [Raspberry] Raspberry Raspberry Pi 4 (Android 13)
+INFO: Renderer: opengl
+INFO: OpenGL version: 4.6.0 NVIDIA 580.173.02
+INFO: Trilinear filtering enabled
+INFO: Texture: 1920x1080
+[server] ERROR: Encoding error: android.media.MediaCodec$CodecException: start failed
+[server] INFO: Retrying with -m1600...
+[server] INFO: Retrying...
+[server] ERROR: Encoding error: android.media.MediaCodec$CodecException: start failed
+[server] INFO: Retrying with -m1280...
+[server] INFO: Retrying...
+[server] INFO: Retrying with -m1024...
+[server] INFO: Retrying...
+[server] ERROR: Encoding error: android.media.MediaCodec$CodecException: start failed
+[server] INFO: Retrying with -m800...
+[server] INFO: Retrying...
+[server] ERROR: Encoding error: android.media.MediaCodec$CodecException: start failed
+[server] ERROR: Encoding error: android.media.MediaCodec$CodecException: start failed
+[server] ERROR: Exception on thread Thread[video,5,main]
+android.media.MediaCodec$CodecException: start failedWARN: Device disconnected
+
+	at android.media.MediaCodec.native_start(Native Method)
+	at android.media.MediaCodec.start(MediaCodec.java:2323)
+	at com.genymobile.scrcpy.video.SurfaceEncoder.streamCapture(SurfaceEncoder.java:86)
+	at com.genymobile.scrcpy.video.SurfaceEncoder.lambda$start$0$com-genymobile-scrcpy-video-SurfaceEncoder(SurfaceEncoder.java:268)
+	at com.genymobile.scrcpy.video.SurfaceEncoder$$ExternalSyntheticLambda0.run(D8$$SyntheticClass:0)
+	at java.lang.Thread.run(Thread.java:1012)
+
