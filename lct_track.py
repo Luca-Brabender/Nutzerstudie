@@ -13,6 +13,7 @@ import argparse
 import collections
 import csv
 import datetime
+from enum import Enum
 import logging
 import math
 import os
@@ -24,7 +25,10 @@ import weakref
 import asyncio
 import json
 import threading
-import websockets
+try:
+    import websockets
+except ImportError:
+    websockets = None
 
 import carla
 from carla import ColorConverter as cc
@@ -32,6 +36,7 @@ import cv2
 from lct_logger import LCTLogger
 from lct_sign_manager import ALL_SEQUENCES
 from aaos_recorder import AAOSRecorder, setup_external_hardware
+from wheel_feedback import WheelForceFeedback, apply_hardware_ffb
 
 if sys.version_info >= (3, 0):
     from configparser import ConfigParser
@@ -102,6 +107,18 @@ def get_actor_display_name(actor, truncate=250):
     return (name[: truncate - 1] + '\u2026') if len(name) > truncate else name
 
 
+def find_audi_blueprint(blueprint_library, actor_filter='vehicle.audi.*'):
+    """Wählt bevorzugt den Audi A2 (in CARLA der A1/A2-Kompaktklasse), TT oder ein Audi-Modell."""
+    candidates = ['vehicle.audi.a2', 'vehicle.audi.a1', 'vehicle.audi.tt', 'vehicle.audi.*']
+    for pattern in candidates:
+        matches = blueprint_library.filter(pattern)
+        if matches:
+            # Deterministisch nach ID sortiert: in jedem Durchlauf exakt das gleiche Fahrzeug
+            return sorted(matches, key=lambda x: x.id)[0]
+    matches = blueprint_library.filter(actor_filter)
+    return matches[0] if matches else blueprint_library.filter('vehicle.*')[0]
+
+
 # ==============================================================================
 # -- World ---------------------------------------------------------------------
 # ==============================================================================
@@ -128,24 +145,35 @@ class World(object):
         cam_pos_index = (
             self.camera_manager.transform_index if self.camera_manager is not None else 0
         )
-        blueprint = random.choice(
-            self.world.get_blueprint_library().filter(self._actor_filter)
-        )
+
+        # WICHTIG: Alle bestehenden/herumstehenden Fahrzeuge & Geister-Autos in der Map entfernen!
+        # Verhindert zuverlässig, dass in der Baseline ein zweites Auto unter/im Spieler spawnt.
+        for actor in self.world.get_actors().filter('vehicle.*'):
+            if self.player is None or actor.id != self.player.id:
+                actor.destroy()
+
+        blueprint = find_audi_blueprint(self.world.get_blueprint_library(), self._actor_filter)
         blueprint.set_attribute('role_name', 'hero')
         if blueprint.has_attribute('color'):
-            color = random.choice(blueprint.get_attribute('color').recommended_values)
+            recommended = blueprint.get_attribute('color').recommended_values
+            # Einheitliches klassisches Audi-Silber / Metallic-Grau
+            color = '160,160,160' if '160,160,160' in recommended else (recommended[0] if recommended else '0,0,0')
             blueprint.set_attribute('color', color)
+
         if self.player is not None:
             spawn_point = self.player.get_transform()
-            spawn_point.location.z += 2.0
-            spawn_point.rotation.roll = 0.0
-            spawn_point.rotation.pitch = 0.0
             self.destroy()
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
-        while self.player is None:
-            spawn_points = self.world.get_map().get_spawn_points()
-            spawn_point = random.choice(spawn_points) if spawn_points else carla.Transform()
-            self.player = self.world.try_spawn_actor(blueprint, spawn_point)
+
+        spawn_points = self.world.get_map().get_spawn_points()
+        sp_idx = 0
+        while self.player is None and sp_idx < len(spawn_points):
+            self.player = self.world.try_spawn_actor(blueprint, spawn_points[sp_idx])
+            sp_idx += 1
+
+        if self.player is None:
+            self.player = self.world.try_spawn_actor(blueprint, carla.Transform())
+
         self.collision_sensor = CollisionSensor(self.player, self.hud)
         self.lane_invasion_sensor = LaneInvasionSensor(self.player, self.hud)
         self.gnss_sensor = GnssSensor(self.player)
@@ -154,6 +182,7 @@ class World(object):
         self.camera_manager.set_sensor(cam_index, notify=False)
         actor_type = get_actor_display_name(self.player)
         self.hud.notification(actor_type)
+        print(f"[CARLA WORLD] Spieler-Fahrzeug gespawnt: {blueprint.id} ({actor_type})")
 
     def next_weather(self, reverse=False):
         self._weather_index += -1 if reverse else 1
@@ -191,7 +220,7 @@ class World(object):
 
 class DualControl(object):
 
-    def __init__(self, world, start_in_autopilot):
+    def __init__(self, world, start_in_autopilot, args=None):
         self._autopilot_enabled = start_in_autopilot
         if isinstance(world.player, carla.Vehicle):
             self._control = carla.VehicleControl()
@@ -265,14 +294,52 @@ class DualControl(object):
             self._reverse_idx = 4
             self._handbrake_idx = 5
 
+        # Force-Feedback Initialisierung (Lenkwinkel, Daempfung, Reibung, dynamisches Rueckstellmoment)
+        ffb_kwargs = {}
+        if wheel_section:
+            for k, conv in [
+                ('steering_range', int),
+                ('overall_gain', float),
+                ('centering_strength', float),
+                ('autocenter', float),
+                ('damping_strength', float),
+                ('friction_strength', float),
+                ('anti_clipping', lambda v: v.lower() in ('true', '1', 'yes')),
+            ]:
+                if self._parser.has_option(wheel_section, k):
+                    try:
+                        ffb_kwargs[k] = conv(self._parser.get(wheel_section, k))
+                    except Exception:
+                        pass
+
+        # Befehlszeilen-Argumente haben Vorrang (falls explizit übergeben)
+        if args is not None:
+            if getattr(args, 'autocenter', None) is not None:
+                ffb_kwargs['autocenter'] = args.autocenter
+            if getattr(args, 'ffb_gain', None) is not None:
+                ffb_kwargs['overall_gain'] = args.ffb_gain
+            if getattr(args, 'wheel_range', None) is not None:
+                ffb_kwargs['steering_range'] = args.wheel_range
+
+        try:
+            self._ffb = WheelForceFeedback(**ffb_kwargs)
+        except Exception as e:
+            print(f"[WARNHINWEIS] Force-Feedback Motor konnte nicht initialisiert werden: {e}")
+            self._ffb = None
+
+    def destroy(self):
+        """Beendet den FFB-Motor sauber und stellt Standardwerte wieder her."""
+        if self._ffb is not None:
+            self._ffb.close()
+            self._ffb = None
+
     def parse_events(self, world, clock):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
             elif event.type == pygame.JOYBUTTONDOWN:
-                if event.button == 0:
-                    world.restart()
-                elif event.button == 1:
+                # Button 0 auf dem Lenkrad soll im Versuch KEIN unabsichtliches world.restart() ausloesen!
+                if event.button == 1:
                     world.hud.toggle_info()
                 elif event.button == 2:
                     world.camera_manager.toggle_camera()
@@ -335,6 +402,14 @@ class DualControl(object):
             elif isinstance(self._control, carla.WalkerControl):
                 self._parse_walker_keys(pygame.key.get_pressed(), clock.get_time())
             world.player.apply_control(self._control)
+
+            # Dynamisches Force Feedback an den internen Lenkrad-Motor uebertragen
+            if self._ffb is not None and isinstance(world.player, carla.Vehicle):
+                vel = world.player.get_velocity()
+                speed_kmh = 3.6 * math.sqrt(vel.x**2 + vel.y**2 + vel.z**2)
+                acc = world.player.get_acceleration()
+                lat_accel = acc.y
+                self._ffb.update(self._control.steer, speed_kmh, lateral_accel=lat_accel)
 
     def _parse_vehicle_keys(self, keys, milliseconds):
         self._control.throttle = 1.0 if keys[K_UP] or keys[K_w] else 0.0
@@ -459,6 +534,7 @@ class HUD(object):
             '',
             'Vehicle: % 20s' % get_actor_display_name(world.player, truncate=20),
             'Map:     % 20s' % world.world.get_map().name.split('/')[-1],
+            'Method:  % 20s' % getattr(self, 'current_method_name', 'None'),
             'Simulation time: % 12s'
             % datetime.timedelta(seconds=int(self.simulation_time)),
             '',
@@ -882,7 +958,7 @@ class CameraManager(object):
 
 
 # ==============================================================================
-# -- LCT Multi-Run Sequenz & Logik --------------------------------------------
+# -- LCT Multi-Run Sequenz, Interaktionsmethoden & Counterbalancing ------------
 # ==============================================================================
 
 # Exakte Ordner-/Map-Namen in deiner Unreal Engine Map-Struktur
@@ -897,6 +973,226 @@ SIGN_SPACING_M = 150.0
 N_SIGNS = 18
 
 
+class TaskMethod(Enum):
+    """Interaktionsmethoden für die Sekundäraufgabe auf Android Automotive."""
+    BASELINE = "Baseline"
+    TOUCH = "Touch"
+    ROTARY = "Drehknopf"
+    MULTIKNOB = "MultiKnob"
+
+    def label(self):
+        labels = {
+            TaskMethod.BASELINE: "Baseline (Nur Fahren - ohne Nebenaufgabe)",
+            TaskMethod.TOUCH: "Touch (Display-Toucheingabe)",
+            TaskMethod.ROTARY: "Drehknopf (Standard-Drehregler)",
+            TaskMethod.MULTIKNOB: "MultiKnob (Smart Rotary mit Fingererkennung)",
+        }
+        return labels.get(self, self.value)
+
+    def description(self):
+        descs = {
+            TaskMethod.BASELINE: "Referenzfahrt nach ISO 26022: Volle Konzentration auf Fahr- und Spurwechselaufgabe.",
+            TaskMethod.TOUCH: "Bedienung der Menü-App auf Android Automotive direkt über den Touchscreen.",
+            TaskMethod.ROTARY: "Bedienung der Menü-App auf Android Automotive über den Standard-Drehknopf.",
+            TaskMethod.MULTIKNOB: "Bedienung der Menü-App über den MultiKnob (erkennt Anzahl der Finger).",
+        }
+        return descs.get(self, "")
+
+
+# Vollständiges Counterbalancing der 3 Sekundäraufgaben-Methoden (3! = 6 Permutationen)
+# Balanciert Reihenfolge- und Ermüdungseffekte (Learning/Fatigue/Carryover Effects)
+COUNTERBALANCING_PERMUTATIONS = [
+    [TaskMethod.TOUCH, TaskMethod.ROTARY, TaskMethod.MULTIKNOB],
+    [TaskMethod.TOUCH, TaskMethod.MULTIKNOB, TaskMethod.ROTARY],
+    [TaskMethod.ROTARY, TaskMethod.TOUCH, TaskMethod.MULTIKNOB],
+    [TaskMethod.ROTARY, TaskMethod.MULTIKNOB, TaskMethod.TOUCH],
+    [TaskMethod.MULTIKNOB, TaskMethod.TOUCH, TaskMethod.ROTARY],
+    [TaskMethod.MULTIKNOB, TaskMethod.ROTARY, TaskMethod.TOUCH],
+]
+
+
+def resolve_study_methods(participant_id, order_list, manual_methods_str=None):
+    """Ermittelt für jeden Schritt der Versuchsreihe die zugewiesene Interaktionsmethode.
+
+    - Schritte mit Map 'lct_track_Baseline' (Map-Index 0) sind immer TaskMethod.BASELINE.
+    - Die 3 Dual-Task-Strecken werden nach Probanden-ID per Counterbalancing balanciert.
+    - Manuelle Vorgabe über manual_methods_str (z.B. 'Touch,Drehknopf,MultiKnob') möglich.
+    """
+    if manual_methods_str:
+        method_map = {m.value.lower(): m for m in TaskMethod}
+        parsed = []
+        for name in manual_methods_str.split(','):
+            key = name.strip().lower()
+            if key in method_map:
+                parsed.append(method_map[key])
+            else:
+                raise ValueError(
+                    f"Unbekannte Methode '{name}'. Erlaubt: Touch, Drehknopf, MultiKnob, Baseline"
+                )
+        dual_methods = parsed
+    else:
+        digits = re.findall(r'\d+', participant_id)
+        p_num = int(digits[0]) if digits else 1
+        perm_idx = (p_num - 1) % len(COUNTERBALANCING_PERMUTATIONS)
+        dual_methods = COUNTERBALANCING_PERMUTATIONS[perm_idx]
+
+    methods_for_steps = []
+    dual_idx = 0
+    for map_idx in order_list:
+        if map_idx == 0:
+            methods_for_steps.append(TaskMethod.BASELINE)
+        else:
+            methods_for_steps.append(dual_methods[dual_idx % len(dual_methods)])
+            dual_idx += 1
+    return methods_for_steps
+
+
+def show_study_ready_screen(display, participant, step_num, total_steps, method, map_name):
+    """Zeigt vor jedem Lauf einen übersichtlichen Anweisungs-Bildschirm im Pygame-Fenster,
+    damit Versuchsleiter & Proband wissen, welche Methode ansteht, und die App vorbereiten können."""
+    clock = pygame.time.Clock()
+    font_large = pygame.font.Font(pygame.font.get_default_font(), 30)
+    font_medium = pygame.font.Font(pygame.font.get_default_font(), 22)
+    font_small = pygame.font.Font(pygame.font.get_default_font(), 17)
+
+    bg_color = (20, 24, 33)
+    header_color = (40, 80, 140)
+    card_bg = (32, 38, 52)
+    accent_color = (255, 204, 0)
+    inst_color = (110, 220, 130)
+
+    waiting = True
+    while waiting:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            elif event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_ESCAPE:
+                    return False
+                if event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    waiting = False
+            elif event.type == pygame.JOYBUTTONDOWN:
+                waiting = False
+
+        w, h = display.get_size()
+        display.fill(bg_color)
+
+        # Header Leiste
+        pygame.draw.rect(display, header_color, (0, 0, w, 70))
+        title = font_large.render(
+            f"LCT STUDIE: PROBAND {participant}  |  LAUF {step_num} VON {total_steps}",
+            True, (255, 255, 255)
+        )
+        display.blit(title, (w // 2 - title.get_width() // 2, 18))
+
+        y = 110
+        # Box mit Methode
+        box_w = min(920, w - 80)
+        box_h = 135
+        box_x = w // 2 - box_w // 2
+        pygame.draw.rect(display, card_bg, (box_x, y, box_w, box_h), border_radius=10)
+        pygame.draw.rect(display, accent_color, (box_x, y, box_w, box_h), width=2, border_radius=10)
+
+        badge_txt = font_small.render("AKTUELLE INTERAKTIONSMETHODE (SECONDARY TASK):", True, (200, 200, 200))
+        display.blit(badge_txt, (box_x + 25, y + 15))
+
+        m_name = font_large.render(method.label(), True, accent_color)
+        display.blit(m_name, (box_x + 25, y + 42))
+
+        m_desc = font_small.render(method.description(), True, (230, 230, 230))
+        display.blit(m_desc, (box_x + 25, y + 88))
+
+        y += box_h + 35
+
+        # Hinweise Box
+        map_txt = font_medium.render(f"Strecke: {map_name} (ISO 26022, 18 Schild-Manöver, 60 km/h)", True, (220, 220, 220))
+        display.blit(map_txt, (w // 2 - map_txt.get_width() // 2, y))
+        y += 45
+
+        if method == TaskMethod.BASELINE:
+            act_txt = font_medium.render("-> Keine Nebenaufgabe. Bitte nur auf das Fahren & Spurwechseln konzentrieren.", True, inst_color)
+        else:
+            act_txt = font_medium.render(f"-> Versuchsleiter: Bitte Android Automotive App auf '{method.value}' vorbereiten!", True, inst_color)
+        display.blit(act_txt, (w // 2 - act_txt.get_width() // 2, y))
+        y += 55
+
+        start_prompt = font_large.render("Drücke [ LEERTASTE ] oder [ LENKRAD-TASTE ] zum Losfahren", True, (255, 255, 255))
+        display.blit(start_prompt, (w // 2 - start_prompt.get_width() // 2, y))
+
+        pygame.display.flip()
+        clock.tick(30)
+    return True
+
+
+def show_study_finished_screen(display, participant, total_steps):
+    """Zeigt am Ende aller 4 Strecken einen Dankeschön-Bildschirm für den Probanden.
+    Wird mit [ ENTER ] (oder Leertaste / Lenkrad-Taste) bestätigt und beendet die Anwendung sauber."""
+    clock = pygame.time.Clock()
+    font_large = pygame.font.Font(pygame.font.get_default_font(), 32)
+    font_medium = pygame.font.Font(pygame.font.get_default_font(), 22)
+    font_small = pygame.font.Font(pygame.font.get_default_font(), 17)
+
+    bg_color = (20, 24, 33)
+    header_color = (34, 139, 34)  # Grün
+    card_bg = (32, 38, 52)
+    accent_color = (255, 215, 0)  # Gold
+    text_color = (240, 240, 240)
+
+    waiting = True
+    while waiting:
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                waiting = False
+            elif event.type == pygame.KEYDOWN:
+                if event.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_ESCAPE, pygame.K_SPACE):
+                    waiting = False
+            elif event.type == pygame.JOYBUTTONDOWN:
+                waiting = False
+
+        w, h = display.get_size()
+        display.fill(bg_color)
+
+        # Header Leiste
+        pygame.draw.rect(display, header_color, (0, 0, w, 70))
+        title = font_large.render("STUDIE ERFOLGREICH ABGESCHLOSSEN!", True, (255, 255, 255))
+        display.blit(title, (w // 2 - title.get_width() // 2, 18))
+
+        y = 110
+        box_w = min(920, w - 80)
+        box_h = 230
+        box_x = w // 2 - box_w // 2
+        pygame.draw.rect(display, card_bg, (box_x, y, box_w, box_h), border_radius=10)
+        pygame.draw.rect(display, header_color, (box_x, y, box_w, box_h), width=2, border_radius=10)
+
+        t1 = font_large.render("Vielen Dank für deine Teilnahme!", True, accent_color)
+        display.blit(t1, (w // 2 - t1.get_width() // 2, y + 25))
+
+        t2 = font_medium.render(
+            f"Proband {participant}: Alle {total_steps} Streckenabschnitte wurden erfolgreich absolviert.",
+            True, text_color
+        )
+        display.blit(t2, (w // 2 - t2.get_width() // 2, y + 80))
+
+        t3 = font_medium.render(
+            "Alle Fahrdaten, Eyetracking-Blicke und Bildschirmaufnahmen wurden sicher gespeichert.",
+            True, (170, 230, 170)
+        )
+        display.blit(t3, (w // 2 - t3.get_width() // 2, y + 125))
+
+        t4 = font_small.render(
+            "Der Versuch ist damit beendet. Du kannst das Lenkrad nun loslassen.",
+            True, (200, 200, 200)
+        )
+        display.blit(t4, (w // 2 - t4.get_width() // 2, y + 175))
+
+        y += box_h + 45
+        prompt = font_large.render("Drücke [ ENTER ] zum Beenden", True, (255, 255, 255))
+        display.blit(prompt, (w // 2 - prompt.get_width() // 2, y))
+
+        pygame.display.flip()
+        clock.tick(30)
+
+
 def next_sign_idx(x):
     """Index des nächsten Schildes (wie im LCTLogger: Schilder bei 150, 300, ... m)."""
     idx = int(max(0.0, x) // SIGN_SPACING_M)
@@ -907,14 +1203,14 @@ class StudyEvents(object):
     """Fortlaufendes Ereignisprotokoll pro Proband (Unix-Zeit -> Synchronisation
     von LCT-Log, Gaze-Log und AAOS-Bildschirmvideo)."""
 
-    def __init__(self, path, participant, step, map_name):
+    def __init__(self, path, participant, step, map_name, method=''):
         new = not os.path.exists(path)
         self._fh = open(path, 'a', newline='')
         self._w = csv.writer(self._fh)
         if new:
-            self._w.writerow(['unix_time', 'iso_time', 'participant', 'step', 'map',
+            self._w.writerow(['unix_time', 'iso_time', 'participant', 'step', 'method', 'map',
                               'event', 'detail'])
-        self.participant, self.step, self.map_name = participant, step, map_name
+        self.participant, self.step, self.map_name, self.method = participant, step, map_name, method
 
     def log(self, event, detail=''):
         if self._fh is None:
@@ -922,7 +1218,7 @@ class StudyEvents(object):
         now = time.time()
         self._w.writerow(['%.4f' % now,
                           datetime.datetime.fromtimestamp(now).isoformat(timespec='milliseconds'),
-                          self.participant, self.step + 1, self.map_name, event, detail])
+                          self.participant, self.step + 1, self.method, self.map_name, event, detail])
         self._fh.flush()
 
     def close(self):
@@ -968,18 +1264,33 @@ def game_loop(args):
     current_map_name = RUN_MAPS[map_idx]
     current_sequence = ALL_SEQUENCES[map_idx]
 
-    # Ausgabe: logs/<Proband>/<Proband>_step<N>_<Map>_<Zeitstempel>_*.csv
+    # Interaktionsmethode für diesen Schritt (per Counterbalancing oder explizit)
+    methods_for_run = resolve_study_methods(args.participant, order, getattr(args, 'methods', None))
+    current_method = methods_for_run[step]
+
+    # Ausgabe: logs/<Proband>/<Proband>_step<N>_<Methode>_<Map>_<Zeitstempel>_*.csv
     participant_dir = os.path.join(args.log_dir, args.participant)
     os.makedirs(participant_dir, exist_ok=True)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     run_prefix = os.path.join(
         participant_dir,
-        '%s_step%d_%s_%s' % (args.participant, step + 1, current_map_name, stamp))
+        '%s_step%d_%s_%s_%s' % (args.participant, step + 1, current_method.value, current_map_name, stamp))
     events = StudyEvents(os.path.join(participant_dir, '%s_events.csv' % args.participant),
-                         args.participant, step, current_map_name)
-    events.log('process_start', 'order=%s' % args.order)
-    print('\n[LCT STUDY] Proband %s | Schritt %d/%d | Map %s'
-          % (args.participant, step + 1, len(order), current_map_name))
+                         args.participant, step, current_map_name, method=current_method.value)
+    events.log('process_start', 'order=%s, method=%s' % (args.order, current_method.value))
+    print('\n' + '=' * 72)
+    print('[LCT STUDY] Proband %s | Schritt %d/%d' % (args.participant, step + 1, len(order)))
+    print('[LCT STUDY] Map:       %s' % current_map_name)
+    print('[LCT STUDY] METHODE:   %s (%s)' % (current_method.value, current_method.label()))
+    print('[LCT STUDY] Anleitung: %s' % current_method.description())
+    print('=' * 72 + '\n')
+
+    # Sofortige Hardware-Konfiguration fuer das Logitech-Lenkrad (Zentrierfeder, Gain, Lenkwinkel)
+    # Damit hat das Lenkrad schon vor der Kalibrierung und dem Map-Laden das richtige Gefühl!
+    ac_val = getattr(args, 'autocenter', 65)
+    gain_val = getattr(args, 'ffb_gain', 85)
+    range_val = getattr(args, 'wheel_range', 900)
+    apply_hardware_ffb(autocenter_pct=ac_val, gain_pct=gain_val, range_deg=range_val)
 
     # Nur beim allerersten Schritt den Hardware-Check ausführen
     if step == 0:
@@ -995,12 +1306,20 @@ def game_loop(args):
             print(f"\n[LCT STUDY] Lade Map {step + 1}/{len(order)}: {current_map_name}...")
             client.load_world(current_map_name)
 
+        # Vor jedem Lauf: Bestehende Fahrzeuge und Sensoren in der Map rückstandslos bereinigen
+        # (Verhindert Geister-Fahrzeuge, Doppel-Spawns oder alte Autos unter dem Spieler)
+        existing_world = client.get_world()
+        for a in existing_world.get_actors().filter('vehicle.*'):
+            a.destroy()
+        for s in existing_world.get_actors().filter('sensor.*'):
+            s.destroy()
+
         flags = pygame.HWSURFACE | pygame.DOUBLEBUF
         if args.fullscreen:
             flags |= pygame.FULLSCREEN
         display = pygame.display.set_mode((args.width, args.height), flags)
-        pygame.display.set_caption('LCT %s - Schritt %d/%d: %s' % (
-            args.participant, step + 1, len(order), current_map_name))
+        pygame.display.set_caption('LCT %s - Schritt %d/%d: %s [%s]' % (
+            args.participant, step + 1, len(order), current_map_name, current_method.value))
 
         # ------------------------------------------------------------------
         # Eyetracking: Server starten, (Re-)Kalibrierung vor jeder Fahrt
@@ -1031,17 +1350,24 @@ def game_loop(args):
                 gaze = None
 
         hud = HUD(args.width, args.height)
+        hud.current_method_name = current_method.value
         world = World(client.get_world(), hud, args.filter)
-        controller = DualControl(world, args.autopilot)
+        controller = DualControl(world, args.autopilot, args=args)
 
         # LCT Logger Instanz erzeugen
         START_X = 0.0
         FINISH_X = 3000.0  # Ziellinie nach dem 18. Schild
         lct_logger = LCTLogger(start_x=START_X, finish_x=FINISH_X,
-                               output_path=run_prefix + '_lct.csv')
+                               output_path=run_prefix + '_lct.csv',
+                               method=current_method.value)
 
         # AAOS Recorder initialisieren
         aaos_recorder = AAOSRecorder(output_dir=participant_dir)
+
+        # Bereit-Bildschirm vor Fahrtbeginn anzeigen (Versuchsleiter/Proband bestätigen Start)
+        if not show_study_ready_screen(display, args.participant, step + 1, len(order), current_method, current_map_name):
+            events.log('abort', 'Abbruch vor Fahrtbeginn')
+            return
 
         clock = pygame.time.Clock()
         gaze_x, gaze_y = -1.0, -1.0
@@ -1153,6 +1479,8 @@ def game_loop(args):
 
                         if world is not None:
                             world.destroy()
+                        if controller is not None:
+                            controller.destroy()
                         pygame.quit()
                         events.close()
 
@@ -1164,6 +1492,9 @@ def game_loop(args):
                         print("[LCT STUDY] ALLE %d FAHRTEN ERFOLGREICH ABGESCHLOSSEN!" % len(order))
                         print("==================================================\n")
                         events.log('study_complete')
+
+                        # Dankeschön-Screen anzeigen, bis der Proband ENTER drückt
+                        show_study_finished_screen(display, args.participant, len(order))
                         return
 
             pygame.display.flip()
@@ -1171,6 +1502,9 @@ def game_loop(args):
             world.render(display)
     finally:
         # Falls das Skript vorzeitig abgebrochen wird: Aufzeichnung & Logger absichern
+        if controller is not None:
+            controller.destroy()
+
         if gaze_rec is not None:
             gaze_rec.close(t_end=time.time())
 
@@ -1227,8 +1561,8 @@ def main():
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
-        default='vehicle.*',
-        help='actor filter (default: "vehicle.*")',
+        default='vehicle.audi.*',
+        help='actor filter (default: "vehicle.audi.*")',
     )
     argparser.add_argument(
         '--run_idx',
@@ -1246,6 +1580,11 @@ def main():
              '(Permutation der Bedingungen, Baseline am Anfang und Ende nach ISO 26022)',
     )
     argparser.add_argument(
+        '--methods', default=None,
+        help='Optionale manuelle Vorgabe der Dual-Task-Methoden (z.B. "Touch,Drehknopf,MultiKnob"). '
+             'Standard: Automatisch aus --participant per Counterbalancing (Lateinisches Quadrat) abgeleitet.',
+    )
+    argparser.add_argument(
         '--log-dir', dest='log_dir', default=os.path.join(SCRIPT_DIR, 'logs'),
         help='Basisordner für alle Logs',
     )
@@ -1261,6 +1600,18 @@ def main():
     argparser.add_argument(
         '--recalibrate', action='store_true',
         help='Gespeicherte Kalibrierung verwerfen und neu kalibrieren',
+    )
+    argparser.add_argument(
+        '--autocenter', type=int, default=65,
+        help='Hardware-Zentrierfeder des Lenkrads in %% (0-100, Standard: 65)',
+    )
+    argparser.add_argument(
+        '--ffb-gain', type=int, default=85,
+        help='Gesamtkraft (Gain) des Lenkradmotors in %% (0-100, Standard: 85)',
+    )
+    argparser.add_argument(
+        '--wheel-range', type=int, default=900,
+        help='Maximaler Lenkwinkel in Grad (Standard: 900)',
     )
     args = argparser.parse_args()
 

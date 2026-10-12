@@ -28,6 +28,7 @@ class LCTLogger:
         gaze_estimator=None,
         aoi_threshold_y=600,
         output_path=None,
+        method='Baseline',
     ):
         self.start_x = start_x
         self.finish_x = finish_x
@@ -35,6 +36,7 @@ class LCTLogger:
         self.aoi_threshold_y = aoi_threshold_y
         # Zieldatei; None -> altes Verhalten 'LCT_Log_<unix>.csv' im Arbeitsordner
         self.output_path = output_path
+        self.method = method
 
         self.is_recording = False
         self.completed = False
@@ -91,6 +93,7 @@ class LCTLogger:
                 'aoi_raw',
                 'p_headunit',
                 'hu_glance_id',
+                'method',
             ])
 
             world.hud.notification('=== STARTLINIE ÜBERFAHREN: LOGGING GESTARTET ===')
@@ -166,6 +169,7 @@ class LCTLogger:
                 aoi_raw,
                 round(p_hu, 3) if p_hu is not None else '',
                 glance_id,
+                self.method,
             ])
 
     def close(self):

@@ -63,3 +63,51 @@ unix_time,iso_time,participant,step,map,event,detail
 1791816262.5901,2026-10-12T16:44:22.590,P00,1,lct_track_Baseline,abort,Abbruch durch Benutzer
 1791820034.3852,2026-10-12T17:47:14.385,P00,1,lct_track_Baseline,process_start,"order=0,1,2,3"
 1791820038.6346,2026-10-12T17:47:18.634,P00,1,lct_track_Baseline,gaze_disabled,Kalibrierung übersprungen/abgebrochen
+1791822195.4116,2026-10-12T18:23:15.411,P00,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791822387.7692,2026-10-12T18:26:27.769,P00,1,Baseline,lct_track_Baseline,gaze_ready,"{""n_sim"": 567, ""n_hu"": 179, ""acc_sim"": 1.0, ""acc_hu"": 1.0, ""weights"": {""yaw"": -1.309, ""pitch"": 1.299, ""gx"": 0.461, ""gy"": 1.072}}"
+1791822447.3559,2026-10-12T18:27:27.355,P00,1,Baseline,lct_track_Baseline,start_line,x=0.22
+1791822447.3584,2026-10-12T18:27:27.358,P00,1,Baseline,lct_track_Baseline,aaos_record_start,
+1791822447.3585,2026-10-12T18:27:27.358,P00,1,Baseline,lct_track_Baseline,gaze_record_start,
+1791822468.1715,2026-10-12T18:27:48.171,P00,1,Baseline,lct_track_Baseline,abort,Abbruch durch Benutzer
+1791822482.5312,2026-10-12T18:28:02.531,P00,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791822528.8327,2026-10-12T18:28:48.832,P00,1,Baseline,lct_track_Baseline,gaze_ready,"{""n_sim"": 567, ""n_hu"": 180, ""acc_sim"": 1.0, ""acc_hu"": 1.0, ""weights"": {""yaw"": -1.38, ""pitch"": 1.321, ""gx"": 0.426, ""gy"": 1.014}}"
+1791822611.4158,2026-10-12T18:30:11.415,P00,1,Baseline,lct_track_Baseline,start_line,x=0.04
+1791822611.4190,2026-10-12T18:30:11.419,P00,1,Baseline,lct_track_Baseline,aaos_record_start,
+1791822611.4191,2026-10-12T18:30:11.419,P00,1,Baseline,lct_track_Baseline,gaze_record_start,
+1791822791.7064,2026-10-12T18:33:11.706,P00,1,Baseline,lct_track_Baseline,finish_line,x=3000.25
+1791822791.7088,2026-10-12T18:33:11.708,P00,1,Baseline,lct_track_Baseline,aaos_record_stop,
+1791822791.7089,2026-10-12T18:33:11.708,P00,1,Baseline,lct_track_Baseline,run_complete,
+1791822792.2627,2026-10-12T18:33:12.262,P00,2,MultiKnob,lct_track_dualtask_1,process_start,"order=0,1,2,3, method=MultiKnob"
+1791822803.3190,2026-10-12T18:33:23.318,P00,2,MultiKnob,lct_track_dualtask_1,gaze_ready,{}
+1791822845.7202,2026-10-12T18:34:05.720,P00,2,MultiKnob,lct_track_dualtask_1,start_line,x=0.20
+1791822845.7233,2026-10-12T18:34:05.723,P00,2,MultiKnob,lct_track_dualtask_1,aaos_record_start,
+1791822845.7234,2026-10-12T18:34:05.723,P00,2,MultiKnob,lct_track_dualtask_1,gaze_record_start,
+1791823025.7022,2026-10-12T18:37:05.702,P00,2,MultiKnob,lct_track_dualtask_1,finish_line,x=3000.27
+1791823025.7043,2026-10-12T18:37:05.704,P00,2,MultiKnob,lct_track_dualtask_1,aaos_record_stop,
+1791823025.7044,2026-10-12T18:37:05.704,P00,2,MultiKnob,lct_track_dualtask_1,run_complete,
+1791823026.2848,2026-10-12T18:37:06.284,P00,3,Drehknopf,lct_track_dualtask_2,process_start,"order=0,1,2,3, method=Drehknopf"
+1791823034.3744,2026-10-12T18:37:14.374,P00,3,Drehknopf,lct_track_dualtask_2,gaze_ready,{}
+1791823088.2738,2026-10-12T18:38:08.273,P00,3,Drehknopf,lct_track_dualtask_2,start_line,x=0.21
+1791823088.2769,2026-10-12T18:38:08.276,P00,3,Drehknopf,lct_track_dualtask_2,aaos_record_start,
+1791823088.2769,2026-10-12T18:38:08.276,P00,3,Drehknopf,lct_track_dualtask_2,gaze_record_start,
+1791823269.7193,2026-10-12T18:41:09.719,P00,3,Drehknopf,lct_track_dualtask_2,finish_line,x=3000.25
+1791823269.7220,2026-10-12T18:41:09.722,P00,3,Drehknopf,lct_track_dualtask_2,aaos_record_stop,
+1791823269.7221,2026-10-12T18:41:09.722,P00,3,Drehknopf,lct_track_dualtask_2,run_complete,
+1791823270.2843,2026-10-12T18:41:10.284,P00,4,Touch,lct_track_dualtask_3,process_start,"order=0,1,2,3, method=Touch"
+1791823279.4248,2026-10-12T18:41:19.424,P00,4,Touch,lct_track_dualtask_3,gaze_ready,{}
+1791823309.1033,2026-10-12T18:41:49.103,P00,4,Touch,lct_track_dualtask_3,start_line,x=0.13
+1791823309.1065,2026-10-12T18:41:49.106,P00,4,Touch,lct_track_dualtask_3,aaos_record_start,
+1791823309.1066,2026-10-12T18:41:49.106,P00,4,Touch,lct_track_dualtask_3,gaze_record_start,
+1791823489.5308,2026-10-12T18:44:49.530,P00,4,Touch,lct_track_dualtask_3,finish_line,x=3000.26
+1791823489.5331,2026-10-12T18:44:49.533,P00,4,Touch,lct_track_dualtask_3,aaos_record_stop,
+1791823489.5331,2026-10-12T18:44:49.533,P00,4,Touch,lct_track_dualtask_3,run_complete,
+1791823489.5331,2026-10-12T18:44:49.533,P00,4,Touch,lct_track_dualtask_3,study_complete,
+1791825335.2951,2026-10-12T19:15:35.295,P00,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791825364.5131,2026-10-12T19:16:04.513,P00,1,Baseline,lct_track_Baseline,gaze_disabled,Kalibrierung übersprungen/abgebrochen
+1791825374.8297,2026-10-12T19:16:14.829,P00,1,Baseline,lct_track_Baseline,abort,Abbruch vor Fahrtbeginn
+1791825379.9020,2026-10-12T19:16:19.901,P00,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791825457.9669,2026-10-12T19:17:37.966,P00,1,Baseline,lct_track_Baseline,gaze_ready,{}
+1791825494.9295,2026-10-12T19:18:14.929,P00,1,Baseline,lct_track_Baseline,start_line,x=0.06
+1791825494.9328,2026-10-12T19:18:14.932,P00,1,Baseline,lct_track_Baseline,aaos_record_start,
+1791825494.9329,2026-10-12T19:18:14.932,P00,1,Baseline,lct_track_Baseline,gaze_record_start,
+1791825511.8856,2026-10-12T19:18:31.885,P00,1,Baseline,lct_track_Baseline,abort,Abbruch durch Benutzer

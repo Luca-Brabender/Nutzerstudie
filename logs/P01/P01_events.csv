@@ -1,0 +1,11 @@
+unix_time,iso_time,participant,step,method,map,event,detail
+1791826930.5812,2026-10-12T19:42:10.581,P01,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791827009.9406,2026-10-12T19:43:29.940,P01,1,Baseline,lct_track_Baseline,gaze_ready,"{""n_sim"": 345, ""n_hu"": 114, ""acc_sim"": 1.0, ""acc_hu"": 1.0, ""weights"": {""yaw"": -1.418, ""pitch"": 1.397, ""gx"": 0.347, ""gy"": 0.965}}"
+1791827040.8921,2026-10-12T19:44:00.892,P01,1,Baseline,lct_track_Baseline,start_line,x=0.02
+1791827040.8971,2026-10-12T19:44:00.897,P01,1,Baseline,lct_track_Baseline,aaos_record_start,
+1791827040.8973,2026-10-12T19:44:00.897,P01,1,Baseline,lct_track_Baseline,gaze_record_start,
+1791827224.2399,2026-10-12T19:47:04.239,P01,1,Baseline,lct_track_Baseline,finish_line,x=3000.13
+1791827224.2426,2026-10-12T19:47:04.242,P01,1,Baseline,lct_track_Baseline,aaos_record_stop,
+1791827224.2426,2026-10-12T19:47:04.242,P01,1,Baseline,lct_track_Baseline,run_complete,
+1791827224.8690,2026-10-12T19:47:04.868,P01,2,Drehknopf,lct_track_dualtask_1,process_start,"order=0,1,2,3, method=Drehknopf"
+1791827232.1927,2026-10-12T19:47:12.192,P01,2,Drehknopf,lct_track_dualtask_1,gaze_ready,{}

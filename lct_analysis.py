@@ -49,7 +49,9 @@ SIGN_SPACING = 150.0
 N_SIGNS = 18
 
 FNAME_RE = re.compile(
-    r'^(?P<participant>.+?)_step(?P<step>\d+)_(?P<map>.+)_(?P<ts>\d{8}-\d{6})_lct\.csv$')
+    r'^(?P<participant>.+?)_step(?P<step>\d+)(?:_(?P<method>Baseline|Touch|Drehknopf|MultiKnob|[A-Za-z0-9_]+?))?_(?P<map>lct_track_[A-Za-z0-9_]+)_(?P<ts>\d{8}-\d{6})_lct\.csv$')
+FNAME_LEGACY_RE = re.compile(
+    r'^(?P<participant>.+?)_step(?P<step>\d+)_(?P<map>.+?)_(?P<ts>\d{8}-\d{6})_lct\.csv$')
 
 
 # ==============================================================================
@@ -60,8 +62,11 @@ FNAME_RE = re.compile(
 def read_lct(path):
     xs, ys = [], []
     seq = {}
+    method_in_csv = None
     with open(path, newline='') as fh:
         for row in csv.DictReader(fh):
+            if method_in_csv is None and 'method' in row and row['method']:
+                method_in_csv = row['method']
             try:
                 x = float(row['pos_x'])
                 y = float(row['pos_y_norm'])
@@ -82,7 +87,7 @@ def read_lct(path):
         xs2.append(x)
         ys2.append(y)
     sequence = [seq.get(i) for i in range(N_SIGNS)]
-    return xs2, ys2, sequence
+    return xs2, ys2, sequence, method_in_csv
 
 
 def resample(xs, ys, x_from, x_to, step=1.0):
@@ -298,17 +303,19 @@ def main():
     runs = []
     for f in collect_files(args.paths):
         base = os.path.basename(f)
-        m = FNAME_RE.match(base)
-        meta = m.groupdict() if m else {'participant': 'unbekannt', 'step': '',
+        m = FNAME_RE.match(base) or FNAME_LEGACY_RE.match(base)
+        meta = m.groupdict() if m else {'participant': 'unbekannt', 'step': '', 'method': '',
                                         'map': '', 'ts': ''}
-        xs, ys, seq = read_lct(f)
+        xs, ys, seq, method_csv = read_lct(f)
         if len(xs) < 10:
             print('Übersprungen (zu wenige Daten): %s' % f)
             continue
+        method = meta.get('method') or method_csv or ('Baseline' if 'baseline' in meta.get('map', '').lower() else 'Unbekannt')
+        meta['method'] = method
         gx, gy = resample(xs, ys, args.x_from, args.x_to)
         prefix = f[:-len('_lct.csv')] if f.endswith('_lct.csv') else None
-        run = dict(meta, file=f, gx=gx, gy=gy, seq=seq,
-                   label='%s step%s %s' % (meta['participant'], meta['step'], meta['map']),
+        run = dict(meta, file=f, gx=gx, gy=gy, seq=seq, method=method,
+                   label='%s step%s %s (%s)' % (meta['participant'], meta['step'], meta['map'], method),
                    glances=read_glances(prefix + '_glances.csv' if prefix else None),
                    quality=read_gaze_quality(prefix + '_gaze.csv' if prefix else None),
                    coverage_m=(xs[-1] - xs[0]))
@@ -331,7 +338,7 @@ def main():
         print('Adaptiertes Modell %s: Beginn %d m vor Schild, Länge %d m (Baseline-MDEV %.3f m)'
               % (p, adapted[p][1], adapted[p][2], adapted[p][0]))
 
-    fields = ['participant', 'step', 'map', 'file', 'coverage_m', 'mdev_basic', 'mdev_adapted',
+    fields = ['participant', 'step', 'method', 'map', 'file', 'coverage_m', 'mdev_basic', 'mdev_adapted',
               'adapted_lc_start_m', 'adapted_lc_length_m', 'lc_errors',
               'hu_glances_n', 'hu_glance_mean_s', 'hu_glance_sd_s', 'hu_glance_max_s',
               'hu_tgt_s', 'hu_glances_over_2s', 'hu_time_pct', 'eyes_off_sim_pct',
@@ -340,8 +347,8 @@ def main():
     with open(args.out, 'w', newline='') as fh:
         w = csv.DictWriter(fh, fieldnames=fields, extrasaction='ignore')
         w.writeheader()
-        print('\n%-10s %-5s %-24s %8s %8s %4s %5s %7s %7s' % (
-            'Proband', 'Step', 'Map', 'MDEVb', 'MDEVa', 'Err', 'nHU', 'TGT[s]', 'max[s]'))
+        print('\n%-10s %-5s %-12s %-24s %8s %8s %4s %5s %7s %7s' % (
+            'Proband', 'Step', 'Methode', 'Map', 'MDEVb', 'MDEVa', 'Err', 'nHU', 'TGT[s]', 'max[s]'))
         for r in runs:
             a = adapted[r['participant']]
             r['mdev_adapted'] = mdev(r['gy'], normative_path(r['gx'], r['seq'], a[1], a[2]))
@@ -354,8 +361,9 @@ def main():
                 if isinstance(v, float):
                     row[k] = round(v, 4)
             w.writerow(row)
-            print('%-10s %-5s %-24s %8.3f %8.3f %4d %5s %7s %7s' % (
-                r['participant'], r['step'], r['map'][:24], r['mdev_basic'], r['mdev_adapted'],
+            print('%-10s %-5s %-12s %-24s %8.3f %8.3f %4d %5s %7s %7s' % (
+                r['participant'], r['step'], r.get('method', '-')[:12], r['map'][:24],
+                r['mdev_basic'], r['mdev_adapted'],
                 r['lc_errors'], gm.get('hu_glances_n', '-'),
                 ('%.2f' % gm['hu_tgt_s']) if gm else '-',
                 ('%.2f' % gm['hu_glance_max_s']) if gm else '-'))
@@ -363,6 +371,34 @@ def main():
                 plot_run(r, os.path.splitext(r['file'])[0] + '_plot.png',
                          args.lc_start, args.lc_length, a)
     print('\nZusammenfassung gespeichert: %s' % args.out)
+
+    # ----------------------------------------------------------------------
+    # Auswertung nach Interaktionsmethode (Mittelwerte über alle Probanden)
+    # ----------------------------------------------------------------------
+    methods_found = sorted(set(r.get('method', 'Unbekannt') for r in runs))
+    if len(methods_found) > 1:
+        print('\n' + '=' * 82)
+        print('VERGLEICH DER INTERAKTIONSMETHODEN (MITTELWERTE ÜBER ALLE PROBANDEN):')
+        print('=' * 82)
+        print('%-16s %4s %10s %10s %10s %10s %10s' % (
+            'Methode', 'N', 'MDEV_adapt', 'MDEV_basic', 'TGT [s]', 'HU-Blicke', 'Fehler'))
+        print('-' * 82)
+        for m in methods_found:
+            m_runs = [r for r in runs if r.get('method') == m]
+            mdev_ad = [r['mdev_adapted'] for r in m_runs if r.get('mdev_adapted') is not None]
+            mdev_bs = [r['mdev_basic'] for r in m_runs if r.get('mdev_basic') is not None]
+            tgts = [r['hu_tgt_s'] for r in m_runs if isinstance(r.get('hu_tgt_s'), (int, float))]
+            glances = [r['hu_glances_n'] for r in m_runs if isinstance(r.get('hu_glances_n'), (int, float))]
+            errs = [r['lc_errors'] for r in m_runs if isinstance(r.get('lc_errors'), (int, float))]
+
+            avg_ad = statistics.mean(mdev_ad) if mdev_ad else 0.0
+            avg_bs = statistics.mean(mdev_bs) if mdev_bs else 0.0
+            avg_tgt = statistics.mean(tgts) if tgts else 0.0
+            avg_gl = statistics.mean(glances) if glances else 0.0
+            avg_err = statistics.mean(errs) if errs else 0.0
+            print('%-16s %4d %10.3f %10.3f %10.2f %10.1f %10.2f' % (
+                m, len(m_runs), avg_ad, avg_bs, avg_tgt, avg_gl, avg_err))
+        print('=' * 82)
 
 
 if __name__ == '__main__':
