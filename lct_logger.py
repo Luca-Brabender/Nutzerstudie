@@ -27,11 +27,14 @@ class LCTLogger:
         finish_x=3000.0,
         gaze_estimator=None,
         aoi_threshold_y=600,
+        output_path=None,
     ):
         self.start_x = start_x
         self.finish_x = finish_x
         self.gaze_estimator = gaze_estimator
         self.aoi_threshold_y = aoi_threshold_y
+        # Zieldatei; None -> altes Verhalten 'LCT_Log_<unix>.csv' im Arbeitsordner
+        self.output_path = output_path
 
         self.is_recording = False
         self.completed = False
@@ -42,7 +45,10 @@ class LCTLogger:
         self.csv_file = None
         self.csv_writer = None
 
-    def update(self, world, signs_data, webcam_frame=None, lane_event='None', gaze_x=-1.0, gaze_y=-1.0):
+    def update(self, world, signs_data, webcam_frame=None, lane_event='None', gaze_x=-1.0,
+               gaze_y=-1.0, gaze_state=None):
+        """``gaze_state``: optionales dict aus dem GazeRecorder mit den Schlüsseln
+        aoi_state, aoi_raw, p_headunit, hu_glance_id. Ohne -> alte Y-Schwellen-AOI."""
         if world.player is None or self.completed:
             return
 
@@ -61,7 +67,7 @@ class LCTLogger:
             self.is_recording = True
             self.start_time = current_time
 
-            filename = f'LCT_Log_{int(self.start_time)}.csv'
+            filename = self.output_path or f'LCT_Log_{int(self.start_time)}.csv'
             self.csv_file = open(filename, mode='w', newline='')
             self.csv_writer = csv.writer(self.csv_file)
 
@@ -81,6 +87,10 @@ class LCTLogger:
                 'gaze_y',
                 'aoi_focus',
                 'line_type',
+                'unix_time',
+                'aoi_raw',
+                'p_headunit',
+                'hu_glance_id',
             ])
 
             world.hud.notification('=== STARTLINIE ÜBERFAHREN: LOGGING GESTARTET ===')
@@ -124,9 +134,16 @@ class LCTLogger:
                     dist_to_next = sign_x - cur_x
                     break
 
-            # AOI-Klassifizierung ausführen
-            aoi_focus = classify_aoi(gaze_x, gaze_y, y_threshold=self.aoi_threshold_y)
-            
+            # AOI-Klassifizierung: bevorzugt aus dem Eyetracking-Klassifikator
+            if gaze_state is not None:
+                aoi_focus = gaze_state.get('aoi_state', 'UNKNOWN')
+                aoi_raw = gaze_state.get('aoi_raw', 'UNKNOWN')
+                p_hu = gaze_state.get('p_headunit')
+                glance_id = gaze_state.get('hu_glance_id', 0)
+            else:
+                aoi_focus = classify_aoi(gaze_x, gaze_y, y_threshold=self.aoi_threshold_y)
+                aoi_raw, p_hu, glance_id = aoi_focus, None, 0
+
             line_type = lane_event
             elapsed_s = current_time - self.start_time
 
@@ -145,6 +162,10 @@ class LCTLogger:
                 round(gaze_y, 1) if gaze_y != -1.0 else -1,
                 aoi_focus,
                 line_type,
+                round(current_time, 4),
+                aoi_raw,
+                round(p_hu, 3) if p_hu is not None else '',
+                glance_id,
             ])
 
     def close(self):

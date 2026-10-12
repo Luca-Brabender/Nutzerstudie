@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<title>LCT Eyetracking (WebGazer)</title>
+<!-- Lokale Kopie bevorzugt (offline-fähig), sonst offizielles Build -->
+<script src="webgazer.js"></script>
+<script>
+  if (typeof webgazer === 'undefined') {
+    document.write('<script src="https://webgazer.cs.brown.edu/webgazer.js"><\/script>');
+  }
+</script>
+<style>
+  body { font-family: sans-serif; background: #111; color: #eee; margin: 0; padding: 20px 20px 20px 360px; }
+  h1 { font-size: 1.4em; margin-top: 0; }
+  #aoi { font-size: 2.4em; font-weight: bold; padding: 18px 26px; border-radius: 10px; display: inline-block; min-width: 420px; text-align: center; }
+  .SIMULATOR { background: #1b4d3e; color: #4dff88; }
+  .HEADUNIT  { background: #5a1b1b; color: #ff6b6b; }
+  .OFFSCREEN { background: #4d431b; color: #ffd84d; }
+  .NO_FACE, .UNKNOWN { background: #333; color: #999; }
+  table { margin-top: 18px; border-collapse: collapse; }
+  td { padding: 4px 14px 4px 0; }
+  td:first-child { color: #888; }
+  .ok { color: #4dff88; } .bad { color: #ff5555; }
+  #hint { margin-top: 24px; color: #aaa; max-width: 760px; line-height: 1.45; }
+  #warn { color: #ff5555; font-weight: bold; }
+</style>
+</head>
+<body>
+<h1>LCT-Nutzerstudie &ndash; Eyetracking-Bridge</h1>
+<div id="aoi" class="UNKNOWN">UNKNOWN</div>
+<table>
+  <tr><td>Python-Verbindung</td><td id="ws" class="bad">getrennt</td></tr>
+  <tr><td>Phase</td><td id="phase">-</td></tr>
+  <tr><td>Gesicht erkannt</td><td id="face">-</td></tr>
+  <tr><td>Samplerate</td><td id="rate">-</td></tr>
+  <tr><td>Kalibrier-Samples</td><td id="nsamp">0</td></tr>
+  <tr><td>Kopf yaw / pitch</td><td id="pose">-</td></tr>
+  <tr><td>Kalman-Filter</td><td id="kal">-</td></tr>
+</table>
+<p id="warn"></p>
+<div id="hint">
+  <b>Hinweise für die Versuchsleitung</b><br>
+  &bull; Dieses Fenster muss <b>sichtbar</b> bleiben (nicht minimieren, nicht verdecken), sonst drosselt der
+  Browser die Berechnung. Ideal: auf dem Versuchsleiter-Monitor.<br>
+  &bull; Kalibriert wird im CARLA-Fenster (gesteuert von <code>lct_track.py</code>). Mausklicks hier
+  beeinflussen das Modell <b>nicht</b>.<br>
+  &bull; Seite <b>nicht neu laden</b> &ndash; sonst geht das Kalibriermodell verloren (dann neu kalibrieren).<br>
+  &bull; Das Gesicht sollte im Vorschaubild links oben im grünen Rahmen sein.
+</div>
+
+<script>
+const params = new URLSearchParams(location.search);
+const WS_URL = params.get('ws') || 'ws://localhost:8765';
+const USE_KALMAN = params.get('kalman') === '1';   // Default aus: eigene Hysterese in Python
+
+let ws = null;
+let calibTarget = null;      // {x, y} während Kalibrierphase
+let calibSamples = 0;
+let lastPositions = null;
+let rateCount = 0;
+const el = id => document.getElementById(id);
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+  ws.onopen = () => {
+    el('ws').textContent = 'verbunden'; el('ws').className = 'ok';
+    send({type: 'hello', calib_samples: calibSamples, kalman: USE_KALMAN,
+          ua: navigator.userAgent, t: Date.now()});
+  };
+  ws.onclose = () => {
+    el('ws').textContent = 'getrennt – reconnect …'; el('ws').className = 'bad';
+    setTimeout(connect, 1000);
+  };
+  ws.onerror = () => {};
+  ws.onmessage = ev => {
+    let m; try { m = JSON.parse(ev.data); } catch (e) { return; }
+    if (m.cmd === 'calib_start') {
+      calibTarget = {x: m.x, y: m.y};
+    } else if (m.cmd === 'calib_stop') {
+      calibTarget = null;
+      send({type: 'calib_ack', calib_samples: calibSamples});
+    } else if (m.cmd === 'clear') {
+      webgazer.clearData();
+      calibSamples = 0; calibTarget = null;
+      el('nsamp').textContent = '0';
+    } else if (m.cmd === 'status') {
+      if (m.phase) el('phase').textContent = m.phase;
+      if (m.aoi) { el('aoi').textContent = m.aoi; el('aoi').className = m.aoi; }
+    }
+  };
+}
+function send(obj) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+}
+
+// Kopfpose aus FaceMesh (468 Landmarks): 33/263 = äußere Augenwinkel, 1 = Nasenspitze
+function headPose(pos) {
+  if (!pos || pos.length < 264) return null;
+  const L = pos[33], R = pos[263], N = pos[1];
+  const mx = (L[0] + R[0]) / 2, my = (L[1] + R[1]) / 2;
+  const iod = Math.hypot(R[0] - L[0], R[1] - L[1]);
+  if (iod < 1) return null;
+  return {yaw: (N[0] - mx) / iod, pitch: (N[1] - my) / iod, iod: iod};
+}
+
+function onGaze(data, elapsed) {
+  const t = Date.now();
+  let pos = null;
+  try { pos = webgazer.getTracker().getPositions(); } catch (e) {}
+  // FaceMesh behält bei Gesichtsverlust das alte Array -> nur neue Arrays zählen
+  const freshFace = !!pos && pos !== lastPositions;
+  lastPositions = pos;
+  const face = (data != null) || freshFace;
+  const hp = face ? headPose(pos) : null;
+
+  // Kalibrierung: aktuelle Augenmerkmale mit Zielkoordinate (Simulator-Fensterkoordinaten,
+  // für die Headunit virtuelle Koordinaten außerhalb des Monitors) ins Modell aufnehmen
+  if (calibTarget && face) {
+    webgazer.recordScreenPosition(calibTarget.x, calibTarget.y, 'click');
+    calibSamples++;
+  }
+
+  const msg = {type: 'gaze', t: t, face: face};
+  if (data != null) { msg.x = data.x; msg.y = data.y; }
+  if (hp) { msg.yaw = hp.yaw; msg.pitch = hp.pitch; msg.iod = hp.iod; }
+  if (calibTarget) msg.calib_samples = calibSamples;
+  send(msg);
+
+  rateCount++;
+  el('face').textContent = face ? 'ja' : 'NEIN';
+  el('face').className = face ? 'ok' : 'bad';
+  if (hp) el('pose').textContent = hp.yaw.toFixed(3) + ' / ' + hp.pitch.toFixed(3);
+  el('nsamp').textContent = calibSamples;
+}
+
+setInterval(() => {
+  el('rate').textContent = rateCount + ' Hz';
+  el('rate').className = rateCount >= 10 ? 'ok' : 'bad';
+  rateCount = 0;
+}, 1000);
+
+document.addEventListener('visibilitychange', () => {
+  el('warn').textContent = document.hidden
+    ? 'ACHTUNG: Fenster ist verdeckt/minimiert – Tracking wird gedrosselt!' : '';
+});
+
+window.addEventListener('load', async () => {
+  el('kal').textContent = USE_KALMAN ? 'an' : 'aus';
+  connect();
+
+  el('warn').textContent = 'Initialisiere Kamera & MediaPipe FaceMesh Modell ...';
+  el('warn').style.color = '#ffd84d';
+
+  // 1. Pfad zu den lokalen MediaPipe FaceMesh WASM- und Modell-Dateien
+  // Fallback auf CDN, falls der lokale Pfad nicht auflösbar sein sollte
+  const localSolutionPath = window.location.origin + '/mediapipe/face_mesh';
+  webgazer.params.faceMeshSolutionPath = localSolutionPath;
+
+  webgazer.params.showVideoPreview = true;
+  webgazer.params.showFaceOverlay = true;
+  webgazer.params.showFaceFeedbackBox = true;
+
+  try {
+    await webgazer
+      .setRegression('ridge')
+      .setTracker('TFFacemesh')
+      .saveDataAcrossSessions(false)
+      .applyKalmanFilter(USE_KALMAN)
+      .setGazeListener(onGaze)
+      .begin();
+
+    webgazer.showPredictionPoints(false);
+    // Keine Selbstkalibrierung durch Mausbewegungen/-klicks in diesem Fenster
+    webgazer.removeMouseEventListeners();
+
+    el('warn').textContent = '';
+    el('warn').style.color = '#ff5555';
+    console.log('[WebGazer] Erfolgreich gestartet mit Solution-Path:', webgazer.params.faceMeshSolutionPath);
+  } catch (err) {
+    console.warn('[WebGazer] Lokaler Start fehlgeschlagen, versuche CDN Fallback...', err);
+    try {
+      webgazer.params.faceMeshSolutionPath = 'https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh';
+      await webgazer.begin();
+      webgazer.showPredictionPoints(false);
+      webgazer.removeMouseEventListeners();
+      el('warn').textContent = '';
+      el('warn').style.color = '#ff5555';
+      console.log('[WebGazer] Erfolgreich via CDN gestartet');
+    } catch (err2) {
+      console.error('[WebGazer Fehler]', err2);
+      el('warn').style.color = '#ff5555';
+      el('warn').textContent = 'Fehler beim Starten von WebGazer: ' + (err2.message || err2);
+    }
+  }
+});
+</script>
+</body>
+</html>
+

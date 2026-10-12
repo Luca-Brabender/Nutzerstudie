@@ -81,33 +81,14 @@ except ImportError:
 # ==============================================================================
 # -- Global functions ----------------------------------------------------------
 # ==============================================================================
-# Globale Variablen für die aktuellen Blickdaten
-LATEST_GAZE_X = -1.0
-LATEST_GAZE_Y = -1.0
+# Eyetracking (WebGazer): Server, AOI-Klassifikation und Kalibrierung liegen in
+# eigenen Modulen. Der Server wird erst im game_loop gestartet (nicht beim Import).
+from gaze_server import GazeServer
+from gaze_aoi import (AOIClassifier, GazeRecorder, Geometry, load_config,
+                      AOI_UNKNOWN)
+from gaze_calibration import GazeCalibration
 
-async def gaze_websocket_handler(websocket):
-    global LATEST_GAZE_X, LATEST_GAZE_Y
-    async for message in websocket:
-        try:
-            data = json.loads(message)
-            LATEST_GAZE_X = float(data.get('x', -1.0))
-            LATEST_GAZE_Y = float(data.get('y', -1.0))
-        except Exception:
-            pass
-
-
-def start_websocket_server():
-    async def main():
-        async with websockets.serve(gaze_websocket_handler, 'localhost', 8765):
-            await asyncio.Future()  # Hält den Server dauerhaft aktiv
-
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(main())
-    
-ws_thread = threading.Thread(target=start_websocket_server, daemon=True)
-ws_thread.start()
-print('[WEBSOCKET] Server gestartet auf ws://localhost:8765')
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 def find_weather_presets():
     rgx = re.compile('.+?(?:(?<=[a-z])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])|$)')
@@ -912,6 +893,60 @@ RUN_MAPS = [
     'lct_track_dualtask_3'
 ]
 
+SIGN_SPACING_M = 150.0
+N_SIGNS = 18
+
+
+def next_sign_idx(x):
+    """Index des nächsten Schildes (wie im LCTLogger: Schilder bei 150, 300, ... m)."""
+    idx = int(max(0.0, x) // SIGN_SPACING_M)
+    return idx if idx < N_SIGNS else -1
+
+
+class StudyEvents(object):
+    """Fortlaufendes Ereignisprotokoll pro Proband (Unix-Zeit -> Synchronisation
+    von LCT-Log, Gaze-Log und AAOS-Bildschirmvideo)."""
+
+    def __init__(self, path, participant, step, map_name):
+        new = not os.path.exists(path)
+        self._fh = open(path, 'a', newline='')
+        self._w = csv.writer(self._fh)
+        if new:
+            self._w.writerow(['unix_time', 'iso_time', 'participant', 'step', 'map',
+                              'event', 'detail'])
+        self.participant, self.step, self.map_name = participant, step, map_name
+
+    def log(self, event, detail=''):
+        if self._fh is None:
+            return
+        now = time.time()
+        self._w.writerow(['%.4f' % now,
+                          datetime.datetime.fromtimestamp(now).isoformat(timespec='milliseconds'),
+                          self.participant, self.step + 1, self.map_name, event, detail])
+        self._fh.flush()
+
+    def close(self):
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+
+def _restart_argv(next_step):
+    """Argumente für den Neustart des Prozesses (nächster Schritt der Reihenfolge)."""
+    clean_argv = []
+    skip_next = False
+    for arg in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg == '--run_idx':
+            skip_next = True
+            continue
+        if arg.startswith('--run_idx=') or arg == '--recalibrate':
+            continue
+        clean_argv.append(arg)
+    return [sys.executable, sys.argv[0]] + clean_argv + ['--run_idx', str(next_step)]
+
 
 def game_loop(args):
     pygame.init()
@@ -919,13 +954,35 @@ def game_loop(args):
     world = None
     lct_logger = None
     aaos_recorder = None
+    gaze = None
+    gaze_rec = None
+    recording_triggered = False
 
-    current_run_idx = getattr(args, 'run_idx', 0)
-    current_map_name = RUN_MAPS[current_run_idx] if current_run_idx < len(RUN_MAPS) else RUN_MAPS[0]
-    current_sequence = ALL_SEQUENCES[current_run_idx] if current_run_idx < len(ALL_SEQUENCES) else ALL_SEQUENCES[0]
+    # Schritt innerhalb der (permutierten) Versuchsreihenfolge
+    order = args.order_list
+    step = args.run_idx
+    if step >= len(order):
+        print('[LCT STUDY] run_idx %d außerhalb der Reihenfolge %s' % (step, order))
+        return
+    map_idx = order[step]
+    current_map_name = RUN_MAPS[map_idx]
+    current_sequence = ALL_SEQUENCES[map_idx]
 
-    # Nur beim allerersten Run (Run 0 / Baseline) den Hardware-Check ausführen
-    if current_run_idx == 0:
+    # Ausgabe: logs/<Proband>/<Proband>_step<N>_<Map>_<Zeitstempel>_*.csv
+    participant_dir = os.path.join(args.log_dir, args.participant)
+    os.makedirs(participant_dir, exist_ok=True)
+    stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    run_prefix = os.path.join(
+        participant_dir,
+        '%s_step%d_%s_%s' % (args.participant, step + 1, current_map_name, stamp))
+    events = StudyEvents(os.path.join(participant_dir, '%s_events.csv' % args.participant),
+                         args.participant, step, current_map_name)
+    events.log('process_start', 'order=%s' % args.order)
+    print('\n[LCT STUDY] Proband %s | Schritt %d/%d | Map %s'
+          % (args.participant, step + 1, len(order), current_map_name))
+
+    # Nur beim allerersten Schritt den Hardware-Check ausführen
+    if step == 0:
         setup_external_hardware()
 
     try:
@@ -935,12 +992,43 @@ def game_loop(args):
         # Prüfen und Laden der jeweiligen Map für den aktuellen Run
         world_map = client.get_world().get_map().name.split('/')[-1]
         if world_map != current_map_name:
-            print(f"\n[LCT STUDY] Lade Map {current_run_idx + 1}/{len(RUN_MAPS)}: {current_map_name}...")
+            print(f"\n[LCT STUDY] Lade Map {step + 1}/{len(order)}: {current_map_name}...")
             client.load_world(current_map_name)
 
-        display = pygame.display.set_mode(
-            (args.width, args.height), pygame.HWSURFACE | pygame.DOUBLEBUF
-        )
+        flags = pygame.HWSURFACE | pygame.DOUBLEBUF
+        if args.fullscreen:
+            flags |= pygame.FULLSCREEN
+        display = pygame.display.set_mode((args.width, args.height), flags)
+        pygame.display.set_caption('LCT %s - Schritt %d/%d: %s' % (
+            args.participant, step + 1, len(order), current_map_name))
+
+        # ------------------------------------------------------------------
+        # Eyetracking: Server starten, (Re-)Kalibrierung vor jeder Fahrt
+        # ------------------------------------------------------------------
+        clf = None
+        gaze_cfg = None
+        if not args.no_gaze:
+            gaze = GazeServer()
+            gaze.start()
+            gaze_cfg = load_config(args.gaze_config)
+            geo = Geometry(gaze_cfg, args.width, args.height)
+            clf = AOIClassifier(gaze_cfg, geo)
+            clf_path = os.path.join(participant_dir, '%s_gaze_classifier.json' % args.participant)
+            if not args.recalibrate:
+                clf.load(clf_path)
+            calib = GazeCalibration(display, gaze, geo, clf, gaze_cfg)
+            if calib.run(allow_reuse=not args.recalibrate):
+                clf.save(clf_path)
+                with open(run_prefix + '_calibration.json', 'w') as fh:
+                    json.dump({'validation': calib.report,
+                               'classifier': clf.train_report,
+                               'headunit_rect_px': geo.hu_rect,
+                               'window_px': [args.width, args.height],
+                               'config': gaze_cfg}, fh, indent=2)
+                events.log('gaze_ready', json.dumps(calib.report))
+            else:
+                events.log('gaze_disabled', 'Kalibrierung übersprungen/abgebrochen')
+                gaze = None
 
         hud = HUD(args.width, args.height)
         world = World(client.get_world(), hud, args.filter)
@@ -949,19 +1037,52 @@ def game_loop(args):
         # LCT Logger Instanz erzeugen
         START_X = 0.0
         FINISH_X = 3000.0  # Ziellinie nach dem 18. Schild
-        lct_logger = LCTLogger(start_x=START_X, finish_x=FINISH_X)
+        lct_logger = LCTLogger(start_x=START_X, finish_x=FINISH_X,
+                               output_path=run_prefix + '_lct.csv')
 
         # AAOS Recorder initialisieren
-        aaos_recorder = AAOSRecorder(output_dir='.')
+        aaos_recorder = AAOSRecorder(output_dir=participant_dir)
 
-        recording_triggered = False
         clock = pygame.time.Clock()
+        gaze_x, gaze_y = -1.0, -1.0
+        gaze_state = None
+        last_status_push = 0.0
 
         while True:
             clock.tick_busy_loop(60)
             if controller.parse_events(world, clock):
+                events.log('abort', 'Abbruch durch Benutzer')
                 return
-                
+
+            now = time.time()
+            player_loc = world.player.get_transform().location if world.player else None
+
+            # 0. Eyetracking-Samples dieses Frames verarbeiten
+            if gaze is not None:
+                samples = gaze.drain()
+                status_aoi = None
+                if gaze_rec is not None:
+                    if player_loc is not None:
+                        gaze_rec.set_context(now, player_loc.x, next_sign_idx(player_loc.x))
+                    gaze_rec.process(samples)
+                    gaze_state = {
+                        'aoi_state': gaze_rec.state,
+                        'aoi_raw': gaze_rec.last_raw,
+                        'p_headunit': gaze_rec.last_p,
+                        'hu_glance_id': gaze_rec.glance_id if gaze_rec.in_hu_glance else 0,
+                    }
+                    status_aoi = gaze_rec.state
+                elif samples:
+                    status_aoi = clf.classify(samples[-1])[0]
+                latest = gaze.latest
+                if latest is not None and latest.x is not None:
+                    gaze_x, gaze_y = latest.x, latest.y
+                else:
+                    gaze_x, gaze_y = -1.0, -1.0
+                if status_aoi and now - last_status_push > 0.2:
+                    gaze.push_status(aoi=status_aoi)
+                    last_status_push = now
+
             # 1. Lane Invasion Event auslesen
             invasion_event = "None"
             if world is not None and getattr(world, 'lane_invasion_sensor', None) is not None:
@@ -970,22 +1091,28 @@ def game_loop(args):
             # 2. Logger genau EINMAL pro Frame updaten & Blickdaten direkt übergeben
             if lct_logger is not None:
                 lct_logger.update(
-                    world, 
-                    current_sequence, 
+                    world,
+                    current_sequence,
                     lane_event=invasion_event,
-                    gaze_x=LATEST_GAZE_X,
-                    gaze_y=LATEST_GAZE_Y
+                    gaze_x=gaze_x,
+                    gaze_y=gaze_y,
+                    gaze_state=gaze_state,
                 )
 
-            if world.player is not None:
-                player_loc = world.player.get_transform().location
+            if player_loc is not None:
 
                 # TRIGGER: STARTLINIE ÜBERSCHRITTEN (X >= 0.0m) -> AAOS RECORDING STARTEN
                 if not recording_triggered and player_loc.x >= START_X:
                     recording_triggered = True
+                    events.log('start_line', 'x=%.2f' % player_loc.x)
                     print("\n[TRIGGER] Startlinie überschritten! Starte AAOS UI-Aufzeichnung...")
                     if aaos_recorder is not None:
                         aaos_recorder.start_recording()
+                        events.log('aaos_record_start')
+                    if gaze is not None:
+                        gaze_rec = GazeRecorder(clf, gaze_cfg, run_prefix)
+                        gaze_rec.set_context(now, player_loc.x, next_sign_idx(player_loc.x))
+                        events.log('gaze_record_start')
 
                 # HARD SPEED LIMIT: Max. 60 km/h (ISO 26022 Vorgabe)
                 vel = world.player.get_velocity()
@@ -997,49 +1124,46 @@ def game_loop(args):
 
                 # ZIELLINIE ERREICHT (3000m)
                 if player_loc.x >= FINISH_X:
-                    print(f"\n[LCT STUDY] Ziellinie für Run {current_run_idx + 1} überquert!")
+                    print(f"\n[LCT STUDY] Ziellinie für Schritt {step + 1} überquert!")
+                    events.log('finish_line', 'x=%.2f' % player_loc.x)
 
-                    # A) AAOS Recording stoppen & MP4 herunterladen
+                    # A) Gaze-Logs schließen (offene Blickzuwendung wird abgeschlossen)
+                    if gaze_rec is not None:
+                        gaze_rec.close(t_end=time.time())
+                        gaze_rec = None
+
+                    # B) AAOS Recording stoppen & MP4 herunterladen
                     if aaos_recorder is not None:
-                        aaos_recorder.stop_and_pull(current_run_idx)
+                        aaos_recorder.stop_and_pull(step)
+                        events.log('aaos_record_stop')
+                        aaos_recorder = None
 
-                    # B) Logger stoppen & CSV sofort speichern
+                    # C) Logger stoppen & CSV sofort speichern
                     if lct_logger is not None:
                         lct_logger.close()
                         lct_logger = None
                         print("[LOGGER] CSV-Datei erfolgreich abgespeichert.")
+                    events.log('run_complete')
 
-                    # C) Kartenwechsel vorbereiten
-                    next_run_idx = current_run_idx + 1
-                    if next_run_idx < len(RUN_MAPS):
-                        next_map_name = RUN_MAPS[next_run_idx]
-                        print(f"[LCT STUDY] Wechsle zu Karte {next_run_idx + 1}: {next_map_name}...")
+                    # D) Nächster Schritt der Reihenfolge
+                    next_step = step + 1
+                    if next_step < len(order):
+                        next_map_name = RUN_MAPS[order[next_step]]
+                        print(f"[LCT STUDY] Wechsle zu Schritt {next_step + 1}: {next_map_name}...")
 
                         if world is not None:
                             world.destroy()
                         pygame.quit()
+                        events.close()
 
-                        clean_argv = []
-                        skip_next = False
-                        for arg in sys.argv[1:]:
-                            if skip_next:
-                                skip_next = False
-                                continue
-                            if arg == '--run_idx':
-                                skip_next = True
-                                continue
-                            if arg.startswith('--run_idx='):
-                                continue
-                            clean_argv.append(arg)
-
-                        args_list = [sys.executable, sys.argv[0]] + clean_argv + ['--run_idx', str(next_run_idx)]
-                        
+                        args_list = _restart_argv(next_step)
                         print(f"[LCT STUDY] Starte Prozess neu mit: {args_list}")
                         os.execv(sys.executable, args_list)
                     else:
                         print("\n==================================================")
-                        print("[LCT STUDY] ALLE 4 RUNS ERFOLGREICH ABGESCHLOSSEN!")
+                        print("[LCT STUDY] ALLE %d FAHRTEN ERFOLGREICH ABGESCHLOSSEN!" % len(order))
                         print("==================================================\n")
+                        events.log('study_complete')
                         return
 
             pygame.display.flip()
@@ -1047,11 +1171,16 @@ def game_loop(args):
             world.render(display)
     finally:
         # Falls das Skript vorzeitig abgebrochen wird: Aufzeichnung & Logger absichern
+        if gaze_rec is not None:
+            gaze_rec.close(t_end=time.time())
+
         if aaos_recorder is not None and recording_triggered:
-            aaos_recorder.stop_and_pull(current_run_idx)
+            aaos_recorder.stop_and_pull(step)
 
         if lct_logger is not None:
             lct_logger.close()
+
+        events.close()
 
         if world is not None:
             world.destroy()
@@ -1092,6 +1221,10 @@ def main():
         help='window resolution (default: 1280x720)',
     )
     argparser.add_argument(
+        '--fullscreen', action='store_true',
+        help='Vollbild (empfohlen; --res sollte dann der Monitorauflösung entsprechen)',
+    )
+    argparser.add_argument(
         '--filter',
         metavar='PATTERN',
         default='vehicle.*',
@@ -1101,11 +1234,41 @@ def main():
         '--run_idx',
         default=0,
         type=int,
-        help='Index des aktuellen Versuchs-Runs (0 bis 3)',
+        help='Schritt innerhalb von --order (0-basiert, wird beim Neustart gesetzt)',
+    )
+    argparser.add_argument(
+        '--participant', default='P00',
+        help='Probanden-ID, z.B. P07 (bestimmt den Log-Ordner)',
+    )
+    argparser.add_argument(
+        '--order', default='0,1,2,3',
+        help='Reihenfolge der Maps als Indizes in RUN_MAPS, z.B. "0,2,3,1,0" '
+             '(Permutation der Bedingungen, Baseline am Anfang und Ende nach ISO 26022)',
+    )
+    argparser.add_argument(
+        '--log-dir', dest='log_dir', default=os.path.join(SCRIPT_DIR, 'logs'),
+        help='Basisordner für alle Logs',
+    )
+    argparser.add_argument(
+        '--no-gaze', dest='no_gaze', action='store_true',
+        help='Ohne Eyetracking fahren',
+    )
+    argparser.add_argument(
+        '--gaze-config', dest='gaze_config',
+        default=os.path.join(SCRIPT_DIR, 'gaze_config.json'),
+        help='JSON mit Monitor- und Headunit-Geometrie',
+    )
+    argparser.add_argument(
+        '--recalibrate', action='store_true',
+        help='Gespeicherte Kalibrierung verwerfen und neu kalibrieren',
     )
     args = argparser.parse_args()
 
     args.width, args.height = [int(x) for x in args.res.split('x')]
+    args.order_list = [int(x) for x in args.order.split(',') if x.strip() != '']
+    for idx in args.order_list:
+        if not 0 <= idx < len(RUN_MAPS):
+            argparser.error('--order enthält ungültigen Map-Index %d' % idx)
 
     log_level = logging.DEBUG if args.debug else logging.INFO
     logging.basicConfig(format='%(levelname)s: %(message)s', level=log_level)

@@ -1,0 +1,4 @@
+participant,step,map,file,coverage_m,mdev_basic,mdev_adapted,adapted_lc_start_m,adapted_lc_length_m,lc_errors,hu_glances_n,hu_glance_mean_s,hu_glance_sd_s,hu_glance_max_s,hu_tgt_s,hu_glances_over_2s,hu_time_pct,eyes_off_sim_pct,no_face_pct,gaze_samples,gaze_rate_hz,face_detect_pct,ws_latency_ms_median
+unbekannt,,,LCT_Log_1791550448.csv,2999.585,1.0979,0.9875,24,38,2,,,,,,,,,,,,,
+unbekannt,,,LCT_Log_1791552090.csv,2999.713,0.573,0.5405,24,38,0,,,,,,,,,,,,,
+unbekannt,,,LCT_Log_1791552587.csv,2999.477,0.7409,0.6027,24,38,0,,,,,,,,,,,,,
