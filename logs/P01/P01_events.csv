@@ -9,3 +9,4 @@ unix_time,iso_time,participant,step,method,map,event,detail
 1791827224.2426,2026-10-12T19:47:04.242,P01,1,Baseline,lct_track_Baseline,run_complete,
 1791827224.8690,2026-10-12T19:47:04.868,P01,2,Drehknopf,lct_track_dualtask_1,process_start,"order=0,1,2,3, method=Drehknopf"
 1791827232.1927,2026-10-12T19:47:12.192,P01,2,Drehknopf,lct_track_dualtask_1,gaze_ready,{}
+1791828241.9090,2026-10-12T20:04:01.909,P01,2,Drehknopf,lct_track_dualtask_1,abort,Abbruch durch Benutzer

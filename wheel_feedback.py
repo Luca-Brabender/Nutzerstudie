@@ -56,7 +56,7 @@ def find_wheel_event_device():
     return None
 
 
-def apply_hardware_ffb(device_path=None, autocenter_pct=65, gain_pct=85, range_deg=900):
+def apply_hardware_ffb(device_path=None, autocenter_pct=75, gain_pct=85, range_deg=900):
     """Setzt die Hardware-Zentrierfeder und Gesamtkraft direkt im Logitech-Treiber."""
     dev_path = device_path or find_wheel_event_device()
     if not dev_path or not os.path.exists(dev_path):
@@ -127,9 +127,11 @@ class WheelForceFeedback:
         self,
         steering_range=900,
         overall_gain=85,
-        autocenter=65,
-        damping_strength=35,
-        friction_strength=15,
+        autocenter=75,
+        center_spring=55,
+        min_force=12,
+        damping_strength=40,
+        friction_strength=20,
         anti_clipping=True,
         **kwargs
     ):
@@ -140,6 +142,8 @@ class WheelForceFeedback:
             overall_gain = kwargs['gain']
         if 'range' in kwargs:
             steering_range = kwargs['range']
+        if 'center_spring_strength' in kwargs:
+            center_spring = kwargs['center_spring_strength']
 
         self.steering_range = int(steering_range)
 
@@ -149,6 +153,12 @@ class WheelForceFeedback:
 
         ac = float(autocenter)
         self.autocenter_pct = int(ac * 100) if ac <= 1.0 else int(ac)
+
+        cs = float(center_spring)
+        self.center_spring = cs if cs <= 1.0 else cs / 100.0
+
+        mf = float(min_force)
+        self.min_force = mf if mf <= 1.0 else mf / 100.0
 
         ds = float(damping_strength)
         self.damping_strength = ds if ds <= 1.0 else ds / 100.0
@@ -194,12 +204,12 @@ class WheelForceFeedback:
                 self.effect_id = self.dev.upload_effect(self.effect)
                 self.dev.write(ecodes.EV_FF, self.effect_id, 1)
                 self.is_active = True
-                print(f"[WHEEL FFB] Dynamisches Feedback aktiv (Daempfung={int(self.damping_strength*100)}%, Reibung={int(self.friction_strength*100)}%)")
+                print(f"[WHEEL FFB] Dynamisches Feedback aktiv (Zentrierfeder={int(self.center_spring*100)}%, MinForce={int(self.min_force*100)}%, Daempfung={int(self.damping_strength*100)}%)")
         except Exception as e:
             print(f"[WHEEL FFB] evdev FF_CONSTANT Initialisierung: {e} (Hardware-Zentrierung bleibt aktiv)")
 
     def update(self, steer, speed_kmh, lateral_accel=0.0):
-        """Berechnet dynamische Zusatzkraefte (Daempfung, Kurvenlast bei 60 km/h)."""
+        """Berechnet dynamische Zusatzkraefte fuer festen Geradeauslauf und realistische Spurwechsel."""
         if not self.is_active or self.dev is None or self.effect_id is None:
             return
 
@@ -209,14 +219,34 @@ class WheelForceFeedback:
         self.last_steer = steer
         self.last_time = now
 
-        # Dynamische Daempfung gegen Lenkrad-Pendeln / Aufschwingen
-        t_damping = -steer_velocity * self.damping_strength * 0.03
+        # Geschwindigkeits-Skalierung: Bei 60 km/h (LCT-Vorgabe) voll aktiv
+        speed_factor = min(1.0, max(0.20, speed_kmh / 50.0))
 
-        # Kurvenlast bei Spurwechseln (nur bei Vorwaertsfahrt)
-        speed_factor = min(1.0, max(0.0, speed_kmh / 50.0))
-        t_lateral = -steer * 0.25 * speed_factor
+        abs_steer = abs(steer)
+        sign_steer = 1.0 if steer > 0.0 else (-1.0 if steer < 0.0 else 0.0)
 
-        t_total = t_damping + t_lateral
+        # 1. Anti-Deadzone / Mindestkraft gegen das mechanische Logitech-Getriebetotband:
+        # Sobald das Lenkrad aus der Mitte bewegt wird, erzeugt der Motor sofort spuerbaren Widerstand
+        deadzone_ramp = min(1.0, abs_steer / 0.035) if abs_steer > 0.001 else 0.0
+        t_deadzone = -sign_steer * (self.min_force * deadzone_ramp) * speed_factor
+
+        # 2. Feste progressive Rueckstellkraft um die Nulllage (Nachlauf / Caster-Effekt):
+        # Steile Kennlinie (Potenz 0.65) gibt dem Lenkrad bei Geradeausfahrt sicheren, stabilen Halt
+        curve = math.pow(abs_steer, 0.65) if abs_steer > 0.001 else 0.0
+        t_center = -sign_steer * curve * self.center_spring * speed_factor
+
+        # 3. Zusaetzlicher Widerstand bei weiteren Lenkwinkeln (Kurvenlast / Spurwechsel)
+        t_lateral = -steer * 0.20 * speed_factor
+
+        # 4. Dynamische Daempfung (verhindert Nervositaet, Zittern und Aufschwingen beim Spurhalten)
+        t_damping = -steer_velocity * self.damping_strength * 0.04
+
+        # 5. Grundreibung (verleiht der Lenksaeule mechanisches Gewicht)
+        vel_dir = 1.0 if steer_velocity > 0.0 else (-1.0 if steer_velocity < 0.0 else 0.0)
+        t_friction = -vel_dir * min(0.10, abs(steer_velocity) * 4.0) * self.friction_strength
+
+        # Gesamtdrehmoment mit Gesamt-Gain gewichten
+        t_total = (t_center + t_deadzone + t_lateral + t_damping + t_friction) * self.overall_gain
 
         if self.anti_clipping:
             compressed = math.tanh(t_total)

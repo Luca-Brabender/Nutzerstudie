@@ -219,6 +219,7 @@ def glance_metrics(glances, min_glance_s=0.12):
           if g['aoi'] == 'HEADUNIT' and float(g['duration_s']) >= min_glance_s]
     off = sum(float(g['duration_s']) for g in segs if g['aoi'] != 'SIMULATOR')
     noface = sum(float(g['duration_s']) for g in segs if g['aoi'] == 'NO_FACE')
+    offscreen = sum(float(g['duration_s']) for g in segs if g['aoi'] == 'OFFSCREEN')
     return {
         'hu_glances_n': len(hu),
         'hu_glance_mean_s': statistics.mean(hu) if hu else 0.0,
@@ -227,6 +228,8 @@ def glance_metrics(glances, min_glance_s=0.12):
         'hu_tgt_s': sum(hu),
         'hu_glances_over_2s': sum(1 for d in hu if d > 2.0),
         'hu_time_pct': 100.0 * sum(hu) / total if total else '',
+        'offscreen_tgt_s': offscreen,
+        'offscreen_time_pct': 100.0 * offscreen / total if total else '',
         'eyes_off_sim_pct': 100.0 * off / total if total else '',
         'no_face_pct': 100.0 * noface / total if total else '',
     }
@@ -252,14 +255,16 @@ def plot_run(run, out_png, s_basic, l_basic, adapted):
             color='#888', lw=1, label='Normmodell (basic)')
     if adapted:
         ax.plot(run['gx'], normative_path(run['gx'], run['seq'], adapted[1], adapted[2]),
-                color='#3a7', lw=1, label='Normmodell (adaptiert)')
+            color='#3a7', lw=1, label='Normmodell (adaptiert)')
     ax.plot(run['gx'], run['gy'], color='#1f4e9c', lw=1.4, label='Fahrspur')
     for g in run.get('glances') or []:
         if g['aoi'] == 'HEADUNIT' and g['start_pos_x'] not in ('', None):
             ax.axvspan(float(g['start_pos_x']), float(g['end_pos_x']), color='#e44', alpha=0.25)
+        elif g['aoi'] == 'OFFSCREEN' and g['start_pos_x'] not in ('', None):
+            ax.axvspan(float(g['start_pos_x']), float(g['end_pos_x']), color='#f90', alpha=0.20)
     for i in range(N_SIGNS):
         ax.axvline((i + 1) * SIGN_SPACING, color='#f90', lw=0.6)
-    ax.set_xlabel('Strecke x [m]  (rot = Blick auf Headunit, orange = Schild)')
+    ax.set_xlabel('Strecke x [m]  (rot = Headunit, gelb/orange = Blick abgewandt, Linien = Schilder)')
     ax.set_ylabel('Querposition [m]')
     ax.set_title('%s  |  MDEV basic = %.3f m' % (run['label'], run['mdev_basic']))
     ax.legend(loc='upper right', fontsize=8)

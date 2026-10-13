@@ -16,7 +16,7 @@
   #aoi { font-size: 2.4em; font-weight: bold; padding: 18px 26px; border-radius: 10px; display: inline-block; min-width: 420px; text-align: center; }
   .SIMULATOR { background: #1b4d3e; color: #4dff88; }
   .HEADUNIT  { background: #5a1b1b; color: #ff6b6b; }
-  .OFFSCREEN { background: #4d431b; color: #ffd84d; }
+  .OFFSCREEN { background: #5c4b1b; color: #ffd84d; border: 2px solid #ffd84d; }
   .NO_FACE, .UNKNOWN { background: #333; color: #999; }
   table { margin-top: 18px; border-collapse: collapse; }
   td { padding: 4px 14px 4px 0; }
@@ -86,7 +86,15 @@ function connect() {
       el('nsamp').textContent = '0';
     } else if (m.cmd === 'status') {
       if (m.phase) el('phase').textContent = m.phase;
-      if (m.aoi) { el('aoi').textContent = m.aoi; el('aoi').className = m.aoi; }
+      if (m.aoi) {
+        let label = m.aoi;
+        if (m.aoi === 'SIMULATOR') label = 'SIMULATOR (Straße)';
+        else if (m.aoi === 'HEADUNIT') label = 'HEADUNIT (AAOS)';
+        else if (m.aoi === 'OFFSCREEN') label = 'OFFSCREEN (Weder noch)';
+        else if (m.aoi === 'NO_FACE') label = 'KEIN GESICHT';
+        el('aoi').textContent = label;
+        el('aoi').className = m.aoi;
+      }
     }
   };
 }

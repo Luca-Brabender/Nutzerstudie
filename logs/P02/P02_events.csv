@@ -1,0 +1,82 @@
+unix_time,iso_time,participant,step,method,map,event,detail
+1791888748.7987,2026-10-13T12:52:28.798,P02,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791888795.7773,2026-10-13T12:53:15.777,P02,1,Baseline,lct_track_Baseline,gaze_disabled,Kalibrierung übersprungen/abgebrochen
+1791890160.3482,2026-10-13T13:16:00.348,P02,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791890308.7739,2026-10-13T13:18:28.773,P02,1,Baseline,lct_track_Baseline,gaze_ready,"{""n_sim"": 565, ""n_hu"": 181, ""acc_sim"": 1.0, ""acc_hu"": 1.0, ""weights"": {""yaw"": -1.312, ""pitch"": 1.279, ""gx"": 0.476, ""gy"": 1.101}, ""bounds"": {""sim_yaw"": [-0.0856, 0.1724], ""sim_pitch"": [0.0925, 0.3676], ""hu_yaw"": [-0.6531, -0.2932], ""hu_pitch"": [0.2669, 0.5825]}}"
+1791890493.1938,2026-10-13T13:21:33.193,P02,1,Baseline,lct_track_Baseline,abort,Abbruch durch Benutzer
+1791891160.2126,2026-10-13T13:32:40.212,P02,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791891195.7707,2026-10-13T13:33:15.770,P02,1,Baseline,lct_track_Baseline,gaze_ready,{}
+1791891208.7444,2026-10-13T13:33:28.744,P02,1,Baseline,lct_track_Baseline,abort,Abbruch vor Fahrtbeginn
+1791891255.3415,2026-10-13T13:34:15.341,P02,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791891472.3493,2026-10-13T13:37:52.349,P02,1,Baseline,lct_track_Baseline,gaze_ready,"{""n_sim"": 565, ""n_hu"": 180, ""acc_sim"": 1.0, ""acc_hu"": 1.0, ""weights"": {""yaw"": -1.351, ""pitch"": 1.334, ""gx"": 0.4, ""gy"": 1.035}, ""bounds"": {""center_yaw"": 0.0299, ""center_pitch"": 0.2615, ""hu_center_yaw"": -0.3967, ""hu_center_pitch"": 0.4862, ""sim_yaw"": [-0.1086, 0.1585], ""sim_pitch"": [0.1198, 0.4023], ""hu_yaw"": [-0.5591, -0.228], ""hu_pitch"": [0.3341, 0.6371]}}"
+1791891510.3236,2026-10-13T13:38:30.323,P02,1,Baseline,lct_track_Baseline,start_line,x=0.16
+1791891510.3558,2026-10-13T13:38:30.355,P02,1,Baseline,lct_track_Baseline,aaos_record_start,
+1791891510.3559,2026-10-13T13:38:30.355,P02,1,Baseline,lct_track_Baseline,gaze_record_start,
+1791891691.9480,2026-10-13T13:41:31.947,P02,1,Baseline,lct_track_Baseline,finish_line,x=3000.03
+1791891691.9595,2026-10-13T13:41:31.959,P02,1,Baseline,lct_track_Baseline,aaos_record_stop,
+1791891691.9596,2026-10-13T13:41:31.959,P02,1,Baseline,lct_track_Baseline,run_complete,
+1791891692.5504,2026-10-13T13:41:32.550,P02,2,Drehknopf,lct_track_dualtask_1,process_start,"order=0,1,2,3, method=Drehknopf"
+1791891697.7422,2026-10-13T13:41:37.742,P02,2,Drehknopf,lct_track_dualtask_1,gaze_ready,{}
+1791891739.7169,2026-10-13T13:42:19.716,P02,2,Drehknopf,lct_track_dualtask_1,start_line,x=0.09
+1791891739.7609,2026-10-13T13:42:19.760,P02,2,Drehknopf,lct_track_dualtask_1,aaos_record_start,
+1791891739.7610,2026-10-13T13:42:19.761,P02,2,Drehknopf,lct_track_dualtask_1,gaze_record_start,
+1791891921.2379,2026-10-13T13:45:21.237,P02,2,Drehknopf,lct_track_dualtask_1,finish_line,x=3000.21
+1791891921.2453,2026-10-13T13:45:21.245,P02,2,Drehknopf,lct_track_dualtask_1,aaos_record_stop,
+1791891921.2453,2026-10-13T13:45:21.245,P02,2,Drehknopf,lct_track_dualtask_1,run_complete,
+1791891921.8354,2026-10-13T13:45:21.835,P02,3,Touch,lct_track_dualtask_2,process_start,"order=0,1,2,3, method=Touch"
+1791891929.6384,2026-10-13T13:45:29.638,P02,3,Touch,lct_track_dualtask_2,gaze_ready,{}
+1791891962.4998,2026-10-13T13:46:02.499,P02,3,Touch,lct_track_dualtask_2,start_line,x=0.00
+1791891962.5498,2026-10-13T13:46:02.549,P02,3,Touch,lct_track_dualtask_2,aaos_record_start,
+1791891962.5499,2026-10-13T13:46:02.549,P02,3,Touch,lct_track_dualtask_2,gaze_record_start,
+1791892144.0484,2026-10-13T13:49:04.048,P02,3,Touch,lct_track_dualtask_2,finish_line,x=3000.11
+1791892144.0550,2026-10-13T13:49:04.055,P02,3,Touch,lct_track_dualtask_2,aaos_record_stop,
+1791892144.0550,2026-10-13T13:49:04.055,P02,3,Touch,lct_track_dualtask_2,run_complete,
+1791892144.6341,2026-10-13T13:49:04.634,P02,4,MultiKnob,lct_track_dualtask_3,process_start,"order=0,1,2,3, method=MultiKnob"
+1791892150.0434,2026-10-13T13:49:10.043,P02,4,MultiKnob,lct_track_dualtask_3,gaze_ready,{}
+1791892186.3227,2026-10-13T13:49:46.322,P02,4,MultiKnob,lct_track_dualtask_3,start_line,x=0.04
+1791892186.3713,2026-10-13T13:49:46.371,P02,4,MultiKnob,lct_track_dualtask_3,aaos_record_start,
+1791892186.3714,2026-10-13T13:49:46.371,P02,4,MultiKnob,lct_track_dualtask_3,gaze_record_start,
+1791892367.8200,2026-10-13T13:52:47.820,P02,4,MultiKnob,lct_track_dualtask_3,finish_line,x=3000.23
+1791892367.8290,2026-10-13T13:52:47.829,P02,4,MultiKnob,lct_track_dualtask_3,aaos_record_stop,
+1791892367.8291,2026-10-13T13:52:47.829,P02,4,MultiKnob,lct_track_dualtask_3,run_complete,
+1791892367.8291,2026-10-13T13:52:47.829,P02,4,MultiKnob,lct_track_dualtask_3,study_complete,
+1791894951.5202,2026-10-13T14:35:51.520,P02,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1791895019.1180,2026-10-13T14:36:59.117,P02,1,Baseline,lct_track_Baseline,gaze_ready,"{""n_sim"": 567, ""n_hu"": 180, ""acc_sim"": 1.0, ""acc_hu"": 1.0, ""weights"": {""yaw"": -1.317, ""pitch"": 1.298, ""gx"": 0.462, ""gy"": 1.075}, ""bounds"": {""center_yaw"": 0.0318, ""center_pitch"": 0.2233, ""hu_center_yaw"": -0.4884, ""hu_center_pitch"": 0.4723, ""sim_yaw"": [-0.0972, 0.1629], ""sim_pitch"": [0.0925, 0.359], ""hu_yaw"": [-0.6569, -0.3211], ""hu_pitch"": [0.3195, 0.6287]}}"
+1791895052.3521,2026-10-13T14:37:32.352,P02,1,Baseline,lct_track_Baseline,start_line,x=0.12
+1791895052.3985,2026-10-13T14:37:32.398,P02,1,Baseline,lct_track_Baseline,aaos_record_start,
+1791895052.3986,2026-10-13T14:37:32.398,P02,1,Baseline,lct_track_Baseline,gaze_record_start,
+1791895059.9866,2026-10-13T14:37:39.986,P02,1,Baseline,lct_track_Baseline,recovery_teleport,"x=104.17, y=-1.89"
+1791895065.8744,2026-10-13T14:37:45.874,P02,1,Baseline,lct_track_Baseline,recovery_teleport,"x=177.08, y=-1.89"
+1791895072.2427,2026-10-13T14:37:52.242,P02,1,Baseline,lct_track_Baseline,recovery_teleport,"x=244.43, y=-1.89"
+1791895080.2894,2026-10-13T14:38:00.289,P02,1,Baseline,lct_track_Baseline,recovery_teleport,"x=309.22, y=-1.89"
+1791895153.8615,2026-10-13T14:39:13.861,P02,1,Baseline,lct_track_Baseline,recovery_teleport,"x=1447.81, y=-1.89"
+1791895247.8814,2026-10-13T14:40:47.881,P02,1,Baseline,lct_track_Baseline,finish_line,x=3000.05
+1791895247.8932,2026-10-13T14:40:47.893,P02,1,Baseline,lct_track_Baseline,aaos_record_stop,
+1791895247.8933,2026-10-13T14:40:47.893,P02,1,Baseline,lct_track_Baseline,run_complete,
+1791895248.4839,2026-10-13T14:40:48.483,P02,2,Drehknopf,lct_track_dualtask_1,process_start,"order=0,1,2,3, method=Drehknopf"
+1791895255.3844,2026-10-13T14:40:55.384,P02,2,Drehknopf,lct_track_dualtask_1,gaze_ready,{}
+1791895287.0480,2026-10-13T14:41:27.047,P02,2,Drehknopf,lct_track_dualtask_1,start_line,x=0.09
+1791895287.0981,2026-10-13T14:41:27.098,P02,2,Drehknopf,lct_track_dualtask_1,aaos_record_start,
+1791895287.0982,2026-10-13T14:41:27.098,P02,2,Drehknopf,lct_track_dualtask_1,gaze_record_start,
+1791895468.6905,2026-10-13T14:44:28.690,P02,2,Drehknopf,lct_track_dualtask_1,finish_line,x=3000.02
+1791895468.7113,2026-10-13T14:44:28.711,P02,2,Drehknopf,lct_track_dualtask_1,aaos_record_stop,
+1791895468.7113,2026-10-13T14:44:28.711,P02,2,Drehknopf,lct_track_dualtask_1,run_complete,
+1791895469.3378,2026-10-13T14:44:29.337,P02,3,Touch,lct_track_dualtask_2,process_start,"order=0,1,2,3, method=Touch"
+1791895512.4923,2026-10-13T14:45:12.492,P02,3,Touch,lct_track_dualtask_2,gaze_ready,{}
+1791895553.4106,2026-10-13T14:45:53.410,P02,3,Touch,lct_track_dualtask_2,start_line,x=0.54
+1791895553.4582,2026-10-13T14:45:53.458,P02,3,Touch,lct_track_dualtask_2,aaos_record_start,
+1791895553.4584,2026-10-13T14:45:53.458,P02,3,Touch,lct_track_dualtask_2,gaze_record_start,
+1791895734.7937,2026-10-13T14:48:54.793,P02,3,Touch,lct_track_dualtask_2,finish_line,x=3000.27
+1791895734.8021,2026-10-13T14:48:54.802,P02,3,Touch,lct_track_dualtask_2,aaos_record_stop,
+1791895734.8022,2026-10-13T14:48:54.802,P02,3,Touch,lct_track_dualtask_2,run_complete,
+1791895735.4290,2026-10-13T14:48:55.428,P02,4,MultiKnob,lct_track_dualtask_3,process_start,"order=0,1,2,3, method=MultiKnob"
+1791895740.8495,2026-10-13T14:49:00.849,P02,4,MultiKnob,lct_track_dualtask_3,gaze_ready,{}
+1791895774.7721,2026-10-13T14:49:34.772,P02,4,MultiKnob,lct_track_dualtask_3,recovery_teleport,"x=0.00, y=-1.89"
+1791895774.7896,2026-10-13T14:49:34.789,P02,4,MultiKnob,lct_track_dualtask_3,start_line,x=0.30
+1791895774.8363,2026-10-13T14:49:34.836,P02,4,MultiKnob,lct_track_dualtask_3,aaos_record_start,
+1791895774.8364,2026-10-13T14:49:34.836,P02,4,MultiKnob,lct_track_dualtask_3,gaze_record_start,
+1791895780.1498,2026-10-13T14:49:40.149,P02,4,MultiKnob,lct_track_dualtask_3,recovery_teleport,"x=66.16, y=-1.89"
+1791895957.6466,2026-10-13T14:52:37.646,P02,4,MultiKnob,lct_track_dualtask_3,finish_line,x=3000.22
+1791895957.6621,2026-10-13T14:52:37.662,P02,4,MultiKnob,lct_track_dualtask_3,aaos_record_stop,
+1791895957.6622,2026-10-13T14:52:37.662,P02,4,MultiKnob,lct_track_dualtask_3,run_complete,
+1791895957.6622,2026-10-13T14:52:37.662,P02,4,MultiKnob,lct_track_dualtask_3,study_complete,

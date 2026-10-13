@@ -58,6 +58,8 @@ DEFAULT_CONFIG = {
     'headunit_rect_cm': {'left': 38.0, 'top': 42.0, 'width': 17.5, 'height': 11.0},
     # Toleranzrand um den Monitor, innerhalb dessen noch SIMULATOR gilt
     'screen_margin_frac': 0.10,
+    # Toleranz für Kopfpose (yaw/pitch) um den Kalibrierbereich
+    'head_pose_tolerance': 0.12,
     # Entscheidungsschwelle P(HEADUNIT)
     'hu_threshold': 0.5,
     # Hysterese
@@ -161,6 +163,7 @@ class AOIClassifier(object):
         self.std = None
         self.w = None
         self.b = 0.0
+        self.bounds = None
         self.train_report = {}
 
     @property
@@ -206,6 +209,39 @@ class AOIClassifier(object):
             b -= lr * gb / n
         self.w, self.b = w, b
 
+        # Cluster-Zentren fuer Kopfpose (yaw/pitch) erfassen
+        sim_yaws = [s.yaw for s in sim_samples if s.face and s.yaw is not None]
+        sim_pitches = [s.pitch for s in sim_samples if s.face and s.pitch is not None]
+        hu_yaws = [s.yaw for s in hu_samples if s.face and s.yaw is not None]
+        hu_pitches = [s.pitch for s in hu_samples if s.face and s.pitch is not None]
+
+        center_yaw = sum(sim_yaws) / len(sim_yaws) if sim_yaws else 0.0
+        center_pitch = sum(sim_pitches) / len(sim_pitches) if sim_pitches else 0.25
+        hu_center_yaw = sum(hu_yaws) / len(hu_yaws) if hu_yaws else -0.45
+        hu_center_pitch = sum(hu_pitches) / len(hu_pitches) if hu_pitches else 0.35
+
+        pose_tol = float(self.cfg.get('head_pose_tolerance', 0.14))
+        sim_yaw_min = min(sim_yaws) - pose_tol if sim_yaws else -0.25
+        sim_yaw_max = max(sim_yaws) + pose_tol if sim_yaws else 0.20
+        sim_pitch_min = min(sim_pitches) - pose_tol if sim_pitches else -0.05
+        sim_pitch_max = max(sim_pitches) + pose_tol if sim_pitches else 0.40
+
+        hu_yaw_min = min(hu_yaws) - pose_tol if hu_yaws else -0.85
+        hu_yaw_max = max(hu_yaws) + pose_tol if hu_yaws else -0.20
+        hu_pitch_min = min(hu_pitches) - pose_tol if hu_pitches else 0.18
+        hu_pitch_max = max(hu_pitches) + pose_tol if hu_pitches else 0.55
+
+        self.bounds = {
+            'center_yaw': round(center_yaw, 4),
+            'center_pitch': round(center_pitch, 4),
+            'hu_center_yaw': round(hu_center_yaw, 4),
+            'hu_center_pitch': round(hu_center_pitch, 4),
+            'sim_yaw': [round(sim_yaw_min, 4), round(sim_yaw_max, 4)],
+            'sim_pitch': [round(sim_pitch_min, 4), round(sim_pitch_max, 4)],
+            'hu_yaw': [round(hu_yaw_min, 4), round(hu_yaw_max, 4)],
+            'hu_pitch': [round(hu_pitch_min, 4), round(hu_pitch_max, 4)],
+        }
+
         # Trainingsgüte
         correct = {0: 0, 1: 0}
         for z, y in zip(Z, Y):
@@ -216,6 +252,7 @@ class AOIClassifier(object):
             'n_sim': n0, 'n_hu': n1,
             'acc_sim': correct[0] / float(n0), 'acc_hu': correct[1] / float(n1),
             'weights': dict(zip(['yaw', 'pitch', 'gx', 'gy'], [round(v, 3) for v in w])),
+            'bounds': self.bounds,
         }
         print('[GAZE] Klassifikator trainiert: %s' % self.train_report)
         return self.train_report
@@ -228,28 +265,88 @@ class AOIClassifier(object):
             # Einfacher Heuristik-Fallback: Kopfdrehung nach rechts/unten
             yaw = sample.yaw if sample.yaw is not None else 0.0
             pitch = sample.pitch if sample.pitch is not None else 0.0
-            return 1.0 if (yaw > 0.15 or pitch > 0.15) else 0.0
+            return 1.0 if (yaw < -0.22 and pitch > 0.25) else 0.0
         f = _features(sample, self.geo)
         z = [(f[j] - self.mean[j]) / self.std[j] for j in range(len(f))]
         return _sigmoid(sum(wj * zj for wj, zj in zip(self.w, z)) + self.b)
 
     def classify(self, sample):
-        """-> (aoi_raw, p_headunit)"""
+        """Klassifiziert das Blickziel in:
+        - AOI_NOFACE: Kein Gesicht vor der Kamera erkannt
+        - AOI_HU: Blick auf die Headunit (Android Automotive)
+        - AOI_SIM: Blick auf den Simulator-Monitor (Straße / Desktop)
+        - AOI_OFF: Weder Bildschirm noch Headunit (Blick abgewandt / zur Seite / oben / unten)
+        - AOI_UNKNOWN: Unbestimmt / zu wenig Daten
+        -> Rückgabe: (aoi_raw, p_headunit)
+        """
         if not sample.face:
             return AOI_NOFACE, None
+
+        yaw = sample.yaw if sample.yaw is not None else 0.0
+        pitch = sample.pitch if sample.pitch is not None else 0.0
+
+        # Kalibrierte Referenzwerte für Monitor- und Headunit-Kopfpose
+        bounds = self.bounds or {}
+        if 'center_yaw' in bounds:
+            center_yaw = float(bounds['center_yaw'])
+            center_pitch = float(bounds['center_pitch'])
+        elif 'sim_yaw' in bounds and len(bounds['sim_yaw']) == 2:
+            center_yaw = (float(bounds['sim_yaw'][0]) + float(bounds['sim_yaw'][1])) / 2.0
+            center_pitch = (float(bounds['sim_pitch'][0]) + float(bounds['sim_pitch'][1])) / 2.0
+        else:
+            center_yaw = 0.0
+            center_pitch = 0.25
+
+        hu_thresh = float(self.cfg.get('hu_threshold', 0.5))
+
+        # Wenn noch kein Modell trainiert ist -> robuste Heuristik
+        if self.w is None:
+            # 1. Blick deutlich abgewandt (OFFSCREEN)
+            if (yaw > max(center_yaw + 0.18, 0.20) or
+                pitch < min(center_pitch - 0.25, -0.05) or
+                (pitch > max(center_pitch + 0.20, 0.44) and yaw > -0.18) or
+                yaw < -0.80):
+                return AOI_OFF, 0.0
+            # 2. Blick zur Headunit
+            if (-0.80 <= yaw <= -0.18 and pitch >= 0.18):
+                return AOI_HU, 0.9
+            # 3. Blick auf den Simulator (Geradeaus)
+            return AOI_SIM, 0.1
+
         p = self.p_headunit(sample)
         if p is None:
             return AOI_UNKNOWN, None
-        if p >= self.cfg['hu_threshold']:
+
+        # --- A) OFFSCREEN (Weder Monitor noch Headunit): ---
+        # 1. Blick nach links (Fenster / linker Außenspiegel): Kopf deutlich nach links gedreht
+        if yaw > max(center_yaw + 0.18, 0.20):
+            return AOI_OFF, p
+        # 2. Blick nach oben (Decke / Rückspiegel): Kopf nach oben geneigt
+        if pitch < min(center_pitch - 0.25, -0.05):
+            return AOI_OFF, p
+        # 3. Blick nach unten in den Schoß / aufs Lenkrad: Kopf nach unten geneigt, aber NICHT zur Headunit gedreht
+        if pitch > max(center_pitch + 0.20, 0.44) and yaw > -0.18:
+            return AOI_OFF, p
+        # 4. Blick extrem weit rechts an der Headunit vorbei
+        if yaw < -0.80:
+            return AOI_OFF, p
+
+        # --- B) HEADUNIT (Android Automotive): ---
+        # p >= Schwelle UND Kopfpose passt zur Headunit (nach rechts & unten geneigt)
+        is_hu_pose = (-0.80 <= yaw <= -0.18 and pitch >= 0.18)
+        if (p >= hu_thresh and is_hu_pose) or (-0.75 <= yaw <= -0.30 and pitch >= 0.22 and p >= 0.35):
             return AOI_HU, p
-        else:
-            return AOI_SIM, p
+
+        # --- C) SIMULATOR (Monitor / Straße / Desktop): ---
+        # Proband blickt nach vorn (weder abgewandt noch auf die Headunit)
+        return AOI_SIM, p
 
     # ----------------------------------------------------------- persistence
     def save(self, path):
         with open(path, 'w') as fh:
             json.dump({'mean': self.mean, 'std': self.std, 'w': self.w, 'b': self.b,
                        'W': self.geo.W, 'H': self.geo.H,
+                       'bounds': self.bounds,
                        'train_report': self.train_report}, fh, indent=2)
 
     def load(self, path):
@@ -261,6 +358,7 @@ class AOIClassifier(object):
             print('[GAZE] Gespeicherter Klassifikator passt nicht zur Fensterauflösung.')
             return False
         self.mean, self.std, self.w, self.b = d['mean'], d['std'], d['w'], d['b']
+        self.bounds = d.get('bounds', None)
         self.train_report = d.get('train_report', {})
         return self.w is not None
 
@@ -409,6 +507,8 @@ class GazeRecorder(object):
         ])
         if seg['aoi'] == AOI_HU:
             print('[GAZE] Headunit-Glance #%s: %.2f s (x=%s m)' % (gid, seg['duration'], sp))
+        elif seg['aoi'] == AOI_OFF:
+            print('[GAZE] Blick abgewandt (Offscreen): %.2f s (x=%s m)' % (seg['duration'], sp))
 
     def close(self, t_end=None):
         if self._gaze_fh is None:

@@ -25,12 +25,13 @@ import time
 
 import pygame
 
-from gaze_aoi import AOI_HU, AOI_SIM, AOI_NOFACE, AOI_UNKNOWN
+from gaze_aoi import AOI_HU, AOI_SIM, AOI_OFF, AOI_NOFACE, AOI_UNKNOWN
 
 BG = (35, 39, 47)
 FG = (255, 255, 255)
 GREEN = (40, 180, 90)
 RED = (220, 60, 60)
+YELLOW = (230, 175, 40)
 GRAY = (90, 95, 105)
 
 
@@ -282,7 +283,7 @@ class GazeCalibration(object):
             if samples:
                 last = samples[-1]
                 aoi_raw, p = self.clf.classify(last)
-                if aoi_raw in (AOI_SIM, AOI_HU, AOI_NOFACE):
+                if aoi_raw in (AOI_SIM, AOI_HU, AOI_OFF, AOI_NOFACE):
                     current_aoi = aoi_raw
                 self.gaze.push_status(aoi=current_aoi)
 
@@ -290,13 +291,13 @@ class GazeCalibration(object):
 
             # Titel
             t1 = self.font.render("KALIBRIERUNG ABGESCHLOSSEN - LIVE-TEST", True, FG)
-            self.display.blit(t1, (self.geo.W / 2 - t1.get_width() / 2, 50))
+            self.display.blit(t1, (self.geo.W / 2 - t1.get_width() / 2, 45))
 
-            t2 = self.font.render("Schauen Sie probeweise zwischen Monitor und Headunit hin und her:", True, (180, 200, 220))
-            self.display.blit(t2, (self.geo.W / 2 - t2.get_width() / 2, 95))
+            t2 = self.font.render("Testen Sie: Monitor (Straße), Headunit (AAOS) oder Blick abgewandt (weder noch):", True, (180, 200, 220))
+            self.display.blit(t2, (self.geo.W / 2 - t2.get_width() / 2, 90))
 
             # Großes Status-Feld in der Mitte
-            box_w, box_h = 600, 140
+            box_w, box_h = 700, 140
             box_x = int(self.geo.W / 2 - box_w / 2)
             box_y = int(self.geo.H / 2 - box_h / 2)
 
@@ -306,6 +307,9 @@ class GazeCalibration(object):
             elif current_aoi == AOI_HU:
                 color = RED
                 label = "BLICK AUF HEADUNIT"
+            elif current_aoi == AOI_OFF:
+                color = YELLOW
+                label = "WEDER MONITOR NOCH HEADUNIT"
             elif current_aoi == AOI_NOFACE:
                 color = GRAY
                 label = "KEIN GESICHT ERKANNT"

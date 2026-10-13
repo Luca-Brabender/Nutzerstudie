@@ -1,0 +1,63 @@
+{
+  "validation": {},
+  "classifier": {
+    "n_sim": 565,
+    "n_hu": 180,
+    "acc_sim": 1.0,
+    "acc_hu": 1.0,
+    "weights": {
+      "yaw": -1.351,
+      "pitch": 1.334,
+      "gx": 0.4,
+      "gy": 1.035
+    },
+    "bounds": {
+      "center_yaw": 0.0299,
+      "center_pitch": 0.2615,
+      "hu_center_yaw": -0.3967,
+      "hu_center_pitch": 0.4862,
+      "sim_yaw": [
+        -0.1086,
+        0.1585
+      ],
+      "sim_pitch": [
+        0.1198,
+        0.4023
+      ],
+      "hu_yaw": [
+        -0.5591,
+        -0.228
+      ],
+      "hu_pitch": [
+        0.3341,
+        0.6371
+      ]
+    }
+  },
+  "headunit_rect_px": [
+    813.3779264214047,
+    899.9999999999999,
+    374.5819397993311,
+    235.7142857142857
+  ],
+  "window_px": [
+    1280,
+    720
+  ],
+  "config": {
+    "monitor_width_cm": 59.8,
+    "monitor_height_cm": 33.6,
+    "headunit_rect_cm": {
+      "left": 38.0,
+      "top": 42.0,
+      "width": 17.5,
+      "height": 11.0
+    },
+    "screen_margin_frac": 0.1,
+    "head_pose_tolerance": 0.12,
+    "hu_threshold": 0.5,
+    "min_dwell_s": 0.1,
+    "no_face_bridge_s": 0.5,
+    "min_glance_s": 0.12
+  }
+}

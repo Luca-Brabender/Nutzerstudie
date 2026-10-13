@@ -143,7 +143,7 @@ class World(object):
     def restart(self):
         cam_index = self.camera_manager.index if self.camera_manager is not None else 0
         cam_pos_index = (
-            self.camera_manager.transform_index if self.camera_manager is not None else 0
+            self.camera_manager.transform_index if self.camera_manager is not None else 1
         )
 
         # WICHTIG: Alle bestehenden/herumstehenden Fahrzeuge & Geister-Autos in der Map entfernen!
@@ -302,6 +302,8 @@ class DualControl(object):
                 ('overall_gain', float),
                 ('centering_strength', float),
                 ('autocenter', float),
+                ('center_spring', float),
+                ('min_force', float),
                 ('damping_strength', float),
                 ('friction_strength', float),
                 ('anti_clipping', lambda v: v.lower() in ('true', '1', 'yes')),
@@ -320,6 +322,10 @@ class DualControl(object):
                 ffb_kwargs['overall_gain'] = args.ffb_gain
             if getattr(args, 'wheel_range', None) is not None:
                 ffb_kwargs['steering_range'] = args.wheel_range
+            if getattr(args, 'center_spring', None) is not None:
+                ffb_kwargs['center_spring'] = args.center_spring
+            if getattr(args, 'min_force', None) is not None:
+                ffb_kwargs['min_force'] = args.min_force
 
         try:
             self._ffb = WheelForceFeedback(**ffb_kwargs)
@@ -1287,9 +1293,9 @@ def game_loop(args):
 
     # Sofortige Hardware-Konfiguration fuer das Logitech-Lenkrad (Zentrierfeder, Gain, Lenkwinkel)
     # Damit hat das Lenkrad schon vor der Kalibrierung und dem Map-Laden das richtige Gefühl!
-    ac_val = getattr(args, 'autocenter', 65)
-    gain_val = getattr(args, 'ffb_gain', 85)
-    range_val = getattr(args, 'wheel_range', 900)
+    ac_val = getattr(args, 'autocenter', None) or 75
+    gain_val = getattr(args, 'ffb_gain', None) or 85
+    range_val = getattr(args, 'wheel_range', None) or 900
     apply_hardware_ffb(autocenter_pct=ac_val, gain_pct=gain_val, range_deg=range_val)
 
     # Nur beim allerersten Schritt den Hardware-Check ausführen
@@ -1374,6 +1380,13 @@ def game_loop(args):
         gaze_state = None
         last_status_push = 0.0
 
+        # Variablen fuer Out-of-Bounds / Map-Absturz Recovery (Teleport zurueck auf die Fahrbahn)
+        MIDDLE_LANE_Y = -1.8875  # Mitte der mittleren Spur in CARLA (ISO 26022, pos_y_norm = 5.6625 m)
+        last_safe_x = 0.0
+        last_safe_z = None
+        last_safe_speed_kmh = 50.0
+        last_recovery_time = 0.0
+
         while True:
             clock.tick_busy_loop(60)
             if controller.parse_events(world, clock):
@@ -1425,7 +1438,57 @@ def game_loop(args):
                     gaze_state=gaze_state,
                 )
 
-            if player_loc is not None:
+            if player_loc is not None and world.player is not None:
+                player_trans = world.player.get_transform()
+                vel = world.player.get_velocity()
+                current_speed_kmh = 3.6 * math.sqrt(vel.x**2 + vel.y**2 + vel.z**2)
+
+                # Initiale Fahrbahnhöhe ermitteln
+                if last_safe_z is None:
+                    last_safe_z = player_loc.z
+
+                # A) Normalen Straßenzustand erfassen (Fahrzeug fährt regulär auf der Fahrbahn)
+                is_on_road = (
+                    abs(player_loc.y - MIDDLE_LANE_Y) < 8.0 and
+                    player_loc.z >= (last_safe_z - 1.5) and
+                    abs(player_trans.rotation.pitch) < 35.0 and
+                    abs(player_trans.rotation.roll) < 35.0
+                )
+                if is_on_road:
+                    last_safe_x = player_loc.x
+                    last_safe_z = player_loc.z
+                    last_safe_speed_kmh = max(25.0, current_speed_kmh)
+
+                # B) Map-Absturz / Void-Fall / Out-of-Bounds erkennen & nahtlos retten
+                has_fallen = (
+                    (player_loc.z < (last_safe_z - 3.5)) or
+                    (player_loc.z < -10.0) or
+                    (abs(player_loc.y - MIDDLE_LANE_Y) > 25.0) or
+                    (vel.z < -12.0 and player_loc.z < (last_safe_z - 2.0))
+                )
+
+                if has_fallen and (now - last_recovery_time > 2.0):
+                    last_recovery_time = now
+                    respawn_x = max(0.0, last_safe_x)
+                    respawn_y = MIDDLE_LANE_Y
+                    respawn_z = (last_safe_z if last_safe_z is not None else 0.5) + 0.35
+                    respawn_trans = carla.Transform(
+                        carla.Location(x=respawn_x, y=respawn_y, z=respawn_z),
+                        carla.Rotation(pitch=0.0, yaw=0.0, roll=0.0)  # Exakt geradeaus in Fahrtrichtung
+                    )
+                    world.player.set_transform(respawn_trans)
+
+                    # Vorwärts-Fahrgeschwindigkeit wiederherstellen (nahe 60 km/h Zielgeschwindigkeit)
+                    target_vx = min(16.67, max(10.0, last_safe_speed_kmh / 3.6))
+                    world.player.set_target_velocity(carla.Vector3D(x=target_vx, y=0.0, z=0.0))
+                    world.player.set_target_angular_velocity(carla.Vector3D(0.0, 0.0, 0.0))
+
+                    ctrl = carla.VehicleControl(throttle=0.35, steer=0.0, brake=0.0, hand_brake=False)
+                    world.player.apply_control(ctrl)
+
+                    world.hud.notification("Fahrbahn verlassen: Auto auf mittlere Spur zurückgesetzt!")
+                    events.log('recovery_teleport', f'x={respawn_x:.2f}, y={respawn_y:.2f}')
+                    print(f"\n[RECOVERY] Fahrzeug fiel aus der Map! Nahtlos wiederhergestellt bei x={respawn_x:.2f}m auf mittlerer Spur.")
 
                 # TRIGGER: STARTLINIE ÜBERSCHRITTEN (X >= 0.0m) -> AAOS RECORDING STARTEN
                 if not recording_triggered and player_loc.x >= START_X:
@@ -1441,8 +1504,6 @@ def game_loop(args):
                         events.log('gaze_record_start')
 
                 # HARD SPEED LIMIT: Max. 60 km/h (ISO 26022 Vorgabe)
-                vel = world.player.get_velocity()
-                current_speed_kmh = 3.6 * math.sqrt(vel.x**2 + vel.y**2 + vel.z**2)
                 if current_speed_kmh >= 60.0:
                     ctrl = world.player.get_control()
                     ctrl.throttle = 0.0
@@ -1602,16 +1663,24 @@ def main():
         help='Gespeicherte Kalibrierung verwerfen und neu kalibrieren',
     )
     argparser.add_argument(
-        '--autocenter', type=int, default=65,
-        help='Hardware-Zentrierfeder des Lenkrads in %% (0-100, Standard: 65)',
+        '--autocenter', type=int, default=None,
+        help='Hardware-Zentrierfeder des Lenkrads in %% (0-100, Standard: 75 in wheel_config.ini)',
     )
     argparser.add_argument(
-        '--ffb-gain', type=int, default=85,
-        help='Gesamtkraft (Gain) des Lenkradmotors in %% (0-100, Standard: 85)',
+        '--center-spring', type=int, default=None,
+        help='Progressive Zentrierkraft um die Nulllage in %% (0-100, Standard: 55)',
     )
     argparser.add_argument(
-        '--wheel-range', type=int, default=900,
-        help='Maximaler Lenkwinkel in Grad (Standard: 900)',
+        '--min-force', type=int, default=None,
+        help='Mindestkraft / Anti-Deadzone gegen Getriebespiel in %% (0-100, Standard: 12)',
+    )
+    argparser.add_argument(
+        '--ffb-gain', type=int, default=None,
+        help='Gesamtkraft (Gain) des Lenkradmotors in %% (0-100, Standard: 85 in wheel_config.ini)',
+    )
+    argparser.add_argument(
+        '--wheel-range', type=int, default=None,
+        help='Maximaler Lenkwinkel in Grad (Standard: 900 in wheel_config.ini)',
     )
     args = argparser.parse_args()
 
