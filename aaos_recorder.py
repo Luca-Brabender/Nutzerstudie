@@ -352,3 +352,27 @@ def setup_external_hardware(device_ip="192.168.0.103", port=5555):
         print("[OK] Android Touch-Indikatoren & Daueranzeige (kein Standby) aktiviert.")
     except Exception as e:
         print(f"[WARNHINWEIS] ADB konnte nicht gestartet oder verbunden werden: {e}")
+
+
+def set_knob_service_mode(device_ip="192.168.0.103", port=5555, standard_rotary=False):
+    """Konfiguriert den Betriebsmodus des MultiKnob in KnobService.kt auf Android Automotive via ADB Broadcast.
+    
+    standard_rotary = True  -> Standard-Drehknopf / Drehregler (Fingererkennung AUS)
+    standard_rotary = False -> MultiKnob (Fingererkennung AN)
+    """
+    device_serial = f"{device_ip}:{port}"
+    val_str = "true" if standard_rotary else "false"
+    mode_name = "Standard-Drehregler (Fingererkennung AUS)" if standard_rotary else "MultiKnob (Fingererkennung AN)"
+    cmd = [
+        "adb", "-s", device_serial, "shell",
+        "am", "broadcast", "--user", "0",
+        "-a", "com.example.knobservice.SET_ROTARY_MODE",
+        "--ez", "standard_rotary", val_str
+    ]
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+        print(f"[KNOB SERVICE] Betriebsmodus gesetzt: {mode_name} (standard_rotary={val_str})")
+        return True
+    except Exception as e:
+        print(f"[KNOB SERVICE WARNHINWEIS] Konnte Modus nicht an KnobService senden: {e}")
+        return False

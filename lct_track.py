@@ -35,8 +35,9 @@ from carla import ColorConverter as cc
 import cv2
 from lct_logger import LCTLogger
 from lct_sign_manager import ALL_SEQUENCES
-from aaos_recorder import AAOSRecorder, setup_external_hardware
+from aaos_recorder import AAOSRecorder, setup_external_hardware, set_knob_service_mode
 from wheel_feedback import WheelForceFeedback, apply_hardware_ffb
+from secondary_task_manager import SecondaryTaskManager, TaskHUDCard
 
 if sys.version_info >= (3, 0):
     from configparser import ConfigParser
@@ -505,6 +506,7 @@ class HUD(object):
         self._font_mono = pygame.font.Font(mono, 12 if os.name == 'nt' else 14)
         self._notifications = FadingText(font, (width, 40), (0, height - 40))
         self.help = HelpText(pygame.font.Font(mono, 24), width, height)
+        self.task_card = TaskHUDCard(width, height)
         self.server_fps = 0
         self.frame = 0
         self.simulation_time = 0
@@ -520,6 +522,7 @@ class HUD(object):
 
     def tick(self, world, clock):
         self._notifications.tick(world, clock)
+        self.task_card.tick(clock)
         if not self._show_info:
             return
         t = world.player.get_transform()
@@ -598,6 +601,14 @@ class HUD(object):
     def error(self, text):
         self._notifications.set_text('Error: %s' % text, (255, 0, 0))
 
+    def show_task_prompt(self, app_name, duration=7.0):
+        """Blendet die Sekundäraufgaben-Kachel oben zentriert ein."""
+        self.task_card.show(app_name, duration=duration)
+
+    def clear_task_prompt(self):
+        """Entfernt die Sekundäraufgaben-Kachel sofort vom Bildschirm."""
+        self.task_card.hide()
+
     def render(self, display):
         if self._show_info:
             info_surface = pygame.Surface((220, self.dim[1]))
@@ -647,6 +658,7 @@ class HUD(object):
                 v_offset += 18
         self._notifications.render(display)
         self.help.render(display)
+        self.task_card.render(display)
 
 
 # ==============================================================================
@@ -1253,9 +1265,15 @@ def _restart_argv(next_step):
 def game_loop(args):
     pygame.init()
     pygame.font.init()
+    try:
+        if not pygame.mixer.get_init():
+            pygame.mixer.init()
+    except Exception as e:
+        print(f"[AUDIO] pygame.mixer konnte nicht initialisiert werden: {e}")
     world = None
     lct_logger = None
     aaos_recorder = None
+    secondary_task_mgr = None
     gaze = None
     gaze_rec = None
     recording_triggered = False
@@ -1301,6 +1319,17 @@ def game_loop(args):
     # Nur beim allerersten Schritt den Hardware-Check ausführen
     if step == 0 and not getattr(args, 'no_aaos', False):
         setup_external_hardware(device_ip=getattr(args, 'aaos_ip', '192.168.0.103'))
+
+    # MultiKnob Betriebsmodus für diesen Schritt konfigurieren:
+    # Bei "Drehknopf" / "Drehregler" -> MultiKnob wird zum reinen Standard-Drehregler (Fingererkennung AUS)
+    # Bei allen anderen Methoden (Touch, Baseline, MultiKnob) -> Standard MultiKnob mit Fingererkennung AN
+    if not getattr(args, 'no_aaos', False):
+        is_rotary = (current_method == TaskMethod.ROTARY)
+        set_knob_service_mode(
+            device_ip=getattr(args, 'aaos_ip', '192.168.0.103'),
+            standard_rotary=is_rotary
+        )
+        events.log('knob_mode', f'standard_rotary={is_rotary}')
 
     try:
         client = carla.Client(args.host, args.port)
@@ -1376,6 +1405,23 @@ def game_loop(args):
                 max_fps=60,
                 bit_rate="2M",
                 max_size=800,
+            )
+
+        # Sekundäraufgaben-Manager (Idee A: Multimodal mit Ding-Signalton & HUD-Kachel)
+        secondary_task_mgr = None
+        if not getattr(args, 'no_secondary_tasks', False):
+            raw_apps = getattr(args, 'secondary_apps', None)
+            custom_apps = [x.strip() for x in raw_apps.split(',') if x.strip()] if (raw_apps and raw_apps.strip()) else None
+            force_enable = getattr(args, 'force_secondary_tasks', False) or (raw_apps is not None)
+            secondary_task_mgr = SecondaryTaskManager(
+                method=current_method,
+                hud=hud,
+                events=events,
+                participant=args.participant,
+                step=step,
+                duration=getattr(args, 'secondary_task_duration', 7.0),
+                app_list=custom_apps,
+                force_enable=force_enable,
             )
 
         # Bereit-Bildschirm vor Fahrtbeginn anzeigen (Versuchsleiter/Proband bestätigen Start)
@@ -1516,6 +1562,10 @@ def game_loop(args):
                         gaze_rec.set_context(now, player_loc.x, next_sign_idx(player_loc.x))
                         events.log('gaze_record_start')
 
+                # Sekundäraufgaben auslösen (Ding-Signalton + obere HUD-Kachel)
+                if recording_triggered and secondary_task_mgr is not None:
+                    secondary_task_mgr.update(player_loc.x, now)
+
                 # HARD SPEED LIMIT: Max. 60 km/h (ISO 26022 Vorgabe)
                 if current_speed_kmh >= 60.0:
                     ctrl = world.player.get_control()
@@ -1538,7 +1588,9 @@ def game_loop(args):
                         events.log('aaos_record_stop')
                         aaos_recorder = None
 
-                    # C) Logger stoppen & CSV sofort speichern
+                    # C) Sekundäraufgaben & Logger stoppen & CSV sofort speichern
+                    if secondary_task_mgr is not None:
+                        secondary_task_mgr.reset()
                     if lct_logger is not None:
                         lct_logger.close()
                         lct_logger = None
@@ -1587,6 +1639,9 @@ def game_loop(args):
 
         if lct_logger is not None:
             lct_logger.close()
+
+        if secondary_task_mgr is not None:
+            secondary_task_mgr.reset()
 
         events.close()
 
@@ -1702,6 +1757,22 @@ def main():
     argparser.add_argument(
         '--wheel-range', type=int, default=None,
         help='Maximaler Lenkwinkel in Grad (Standard: 900 in wheel_config.ini)',
+    )
+    argparser.add_argument(
+        '--no-secondary-tasks', action='store_true',
+        help='Sekundäraufgaben (Signalton + HUD-Kachel) deaktivieren',
+    )
+    argparser.add_argument(
+        '--force-secondary-tasks', action='store_true',
+        help='Sekundäraufgaben auch bei der Baseline-Fahrt (z.B. für schnelle Tests) erzwingen',
+    )
+    argparser.add_argument(
+        '--secondary-task-duration', type=float, default=7.0,
+        help='Anzeigedauer der HUD-Kachel in Sekunden (Standard: 7.0s)',
+    )
+    argparser.add_argument(
+        '--secondary-apps', nargs='?', const='', default=None,
+        help='Optionale kommaseparierte Liste von App-Namen für Sekundäraufgaben (z.B. "Kamera,Kalender,Radio"). Kann auch als Flag ohne Wert angegeben werden.',
     )
     args = argparser.parse_args()
 

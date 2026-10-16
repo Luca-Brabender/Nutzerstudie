@@ -1,0 +1,25 @@
+unix_time,iso_time,participant,step,method,map,event,detail
+1792166537.4447,2026-10-16T18:02:17.444,P00,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1792166539.4037,2026-10-16T18:02:19.403,P00,1,Baseline,lct_track_Baseline,knob_mode,standard_rotary=False
+1792166553.1388,2026-10-16T18:02:33.138,P00,1,Baseline,lct_track_Baseline,aaos_record_start,
+1792166570.4370,2026-10-16T18:02:50.437,P00,1,Baseline,lct_track_Baseline,start_line,"x=0.20, video_offset=17.298s"
+1792166612.6591,2026-10-16T18:03:32.659,P00,1,Baseline,lct_track_Baseline,abort,Abbruch durch Benutzer
+1792167045.3481,2026-10-16T18:10:45.348,P00,1,Baseline,lct_track_Baseline,process_start,"order=0,1,2,3, method=Baseline"
+1792167047.3140,2026-10-16T18:10:47.314,P00,1,Baseline,lct_track_Baseline,knob_mode,standard_rotary=False
+1792167057.0614,2026-10-16T18:10:57.061,P00,1,Baseline,lct_track_Baseline,aaos_record_start,
+1792167074.3295,2026-10-16T18:11:14.329,P00,1,Baseline,lct_track_Baseline,start_line,"x=0.22, video_offset=17.268s"
+1792167087.9265,2026-10-16T18:11:27.926,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=1, app=Einstellungen, planned_x=225.0, cur_x=225.13"
+1792167106.0546,2026-10-16T18:11:46.054,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=2, app=Rechner, planned_x=525.0, cur_x=525.20"
+1792167124.1688,2026-10-16T18:12:04.168,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=3, app=Kamera, planned_x=825.0, cur_x=825.06"
+1792167142.3599,2026-10-16T18:12:22.359,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=4, app=Uhr, planned_x=1125.0, cur_x=1125.25"
+1792167160.5687,2026-10-16T18:12:40.568,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=5, app=Galerie, planned_x=1425.0, cur_x=1425.09"
+1792167178.6970,2026-10-16T18:12:58.697,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=6, app=Kontakte, planned_x=1725.0, cur_x=1725.22"
+1792167196.8893,2026-10-16T18:13:16.889,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=7, app=Telefon, planned_x=2025.0, cur_x=2025.26"
+1792167215.0492,2026-10-16T18:13:35.049,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=8, app=Radio, planned_x=2325.0, cur_x=2325.01"
+1792167233.1598,2026-10-16T18:13:53.159,P00,1,Baseline,lct_track_Baseline,secondary_task_prompt,"task_idx=9, app=Kalender, planned_x=2625.0, cur_x=2625.01"
+1792167255.8028,2026-10-16T18:14:15.802,P00,1,Baseline,lct_track_Baseline,finish_line,x=3000.03
+1792167261.6429,2026-10-16T18:14:21.642,P00,1,Baseline,lct_track_Baseline,aaos_record_stop,
+1792167261.6429,2026-10-16T18:14:21.642,P00,1,Baseline,lct_track_Baseline,run_complete,
+1792167262.2117,2026-10-16T18:14:22.211,P00,2,MultiKnob,lct_track_dualtask_1,process_start,"order=0,1,2,3, method=MultiKnob"
+1792167262.3824,2026-10-16T18:14:22.382,P00,2,MultiKnob,lct_track_dualtask_1,knob_mode,standard_rotary=False
+1792167278.6782,2026-10-16T18:14:38.678,P00,2,MultiKnob,lct_track_dualtask_1,abort,Abbruch vor Fahrtbeginn
