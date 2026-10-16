@@ -1299,8 +1299,8 @@ def game_loop(args):
     apply_hardware_ffb(autocenter_pct=ac_val, gain_pct=gain_val, range_deg=range_val)
 
     # Nur beim allerersten Schritt den Hardware-Check ausführen
-    if step == 0:
-        setup_external_hardware()
+    if step == 0 and not getattr(args, 'no_aaos', False):
+        setup_external_hardware(device_ip=getattr(args, 'aaos_ip', '192.168.0.103'))
 
     try:
         client = carla.Client(args.host, args.port)
@@ -1367,13 +1367,26 @@ def game_loop(args):
                                output_path=run_prefix + '_lct.csv',
                                method=current_method.value)
 
-        # AAOS Recorder initialisieren
-        aaos_recorder = AAOSRecorder(output_dir=participant_dir)
+        # AAOS Recorder initialisieren (Zeichnet RPi 4 Android Automotive via scrcpy auf)
+        aaos_recorder = None
+        if not getattr(args, 'no_aaos', False):
+            aaos_recorder = AAOSRecorder(
+                output_dir=participant_dir,
+                device_ip=getattr(args, 'aaos_ip', '192.168.0.103'),
+                max_fps=60,
+                bit_rate="2M",
+                max_size=800,
+            )
 
         # Bereit-Bildschirm vor Fahrtbeginn anzeigen (Versuchsleiter/Proband bestätigen Start)
         if not show_study_ready_screen(display, args.participant, step + 1, len(order), current_method, current_map_name):
             events.log('abort', 'Abbruch vor Fahrtbeginn')
             return
+
+        # AAOS Aufnahme VOR dem Losfahren starten (verhindert jegliche Ruckler an der Startlinie!)
+        if aaos_recorder is not None:
+            aaos_recorder.start_recording(run_prefix=run_prefix, run_idx=step)
+            events.log('aaos_record_start')
 
         clock = pygame.time.Clock()
         gaze_x, gaze_y = -1.0, -1.0
@@ -1490,14 +1503,14 @@ def game_loop(args):
                     events.log('recovery_teleport', f'x={respawn_x:.2f}, y={respawn_y:.2f}')
                     print(f"\n[RECOVERY] Fahrzeug fiel aus der Map! Nahtlos wiederhergestellt bei x={respawn_x:.2f}m auf mittlerer Spur.")
 
-                # TRIGGER: STARTLINIE ÜBERSCHRITTEN (X >= 0.0m) -> AAOS RECORDING STARTEN
+                # TRIGGER: STARTLINIE ÜBERSCHRITTEN (X >= 0.0m)
                 if not recording_triggered and player_loc.x >= START_X:
                     recording_triggered = True
-                    events.log('start_line', 'x=%.2f' % player_loc.x)
-                    print("\n[TRIGGER] Startlinie überschritten! Starte AAOS UI-Aufzeichnung...")
+                    start_offset = 0.0
                     if aaos_recorder is not None:
-                        aaos_recorder.start_recording()
-                        events.log('aaos_record_start')
+                        start_offset = aaos_recorder.mark_start_line()
+                    events.log('start_line', f'x={player_loc.x:.2f}, video_offset={start_offset:.3f}s')
+                    print(f"\n[TRIGGER] Startlinie überschritten (x={player_loc.x:.2f}m)! AAOS Video-Offset: {start_offset:.2f}s")
                     if gaze is not None:
                         gaze_rec = GazeRecorder(clf, gaze_cfg, run_prefix)
                         gaze_rec.set_context(now, player_loc.x, next_sign_idx(player_loc.x))
@@ -1519,9 +1532,9 @@ def game_loop(args):
                         gaze_rec.close(t_end=time.time())
                         gaze_rec = None
 
-                    # B) AAOS Recording stoppen & MP4 herunterladen
+                    # B) AAOS Recording stoppen & MP4 abschließen
                     if aaos_recorder is not None:
-                        aaos_recorder.stop_and_pull(step)
+                        aaos_recorder.stop()
                         events.log('aaos_record_stop')
                         aaos_recorder = None
 
@@ -1570,7 +1583,7 @@ def game_loop(args):
             gaze_rec.close(t_end=time.time())
 
         if aaos_recorder is not None and recording_triggered:
-            aaos_recorder.stop_and_pull(step)
+            aaos_recorder.stop()
 
         if lct_logger is not None:
             lct_logger.close()
@@ -1661,6 +1674,14 @@ def main():
     argparser.add_argument(
         '--recalibrate', action='store_true',
         help='Gespeicherte Kalibrierung verwerfen und neu kalibrieren',
+    )
+    argparser.add_argument(
+        '--aaos-ip', default='192.168.0.103',
+        help='IP-Adresse des Raspberry Pi 4 (Android Automotive) für ADB/scrcpy (Standard: 192.168.0.103)',
+    )
+    argparser.add_argument(
+        '--no-aaos', action='store_true',
+        help='AAOS-Bildschirmaufnahme via scrcpy deaktivieren',
     )
     argparser.add_argument(
         '--autocenter', type=int, default=None,
