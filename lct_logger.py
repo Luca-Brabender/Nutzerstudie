@@ -48,7 +48,7 @@ class LCTLogger:
         self.csv_writer = None
 
     def update(self, world, signs_data, webcam_frame=None, lane_event='None', gaze_x=-1.0,
-               gaze_y=-1.0, gaze_state=None):
+               gaze_y=-1.0, gaze_state=None, task_active=0, task_target='None'):
         """``gaze_state``: optionales dict aus dem GazeRecorder mit den Schlüsseln
         aoi_state, aoi_raw, p_headunit, hu_glance_id. Ohne -> alte Y-Schwellen-AOI."""
         if world.player is None or self.completed:
@@ -82,6 +82,8 @@ class LCTLogger:
                 'pos_y_norm',
                 'speed_kmh',
                 'steer',
+                'throttle',
+                'brake',
                 'active_sign_idx',
                 'active_maneuver',
                 'dist_to_next_sign',
@@ -94,6 +96,8 @@ class LCTLogger:
                 'p_headunit',
                 'hu_glance_id',
                 'method',
+                'task_active',
+                'task_target',
             ])
 
             world.hud.notification('=== STARTLINIE ÜBERFAHREN: LOGGING GESTARTET ===')
@@ -158,6 +162,8 @@ class LCTLogger:
                 round(y_norm, 3),
                 round(speed_kmh, 2),
                 round(p_ctrl.steer, 4),
+                round(getattr(p_ctrl, 'throttle', 0.0), 4),
+                round(getattr(p_ctrl, 'brake', 0.0), 4),
                 active_idx,
                 active_maneuver,
                 round(dist_to_next, 2),
@@ -170,6 +176,8 @@ class LCTLogger:
                 round(p_hu, 3) if p_hu is not None else '',
                 glance_id,
                 self.method,
+                1 if task_active else 0,
+                str(task_target) if task_target else 'None',
             ])
 
     def close(self):

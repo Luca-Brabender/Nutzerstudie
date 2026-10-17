@@ -1,2 +1,5 @@
 participant,step,method,map,file,coverage_m,mdev_basic,mdev_adapted,adapted_lc_start_m,adapted_lc_length_m,lc_errors,hu_glances_n,hu_glance_mean_s,hu_glance_sd_s,hu_glance_max_s,hu_tgt_s,hu_glances_over_2s,hu_time_pct,eyes_off_sim_pct,no_face_pct,gaze_samples,gaze_rate_hz,face_detect_pct,ws_latency_ms_median
-unbekannt,,Unbekannt,,LCT_Log_1791552587.csv,2999.477,0.7409,0.5993,22,34,0,,,,,,,,,,,,,
+P00,1,Baseline,lct_track_Baseline,logs/P00/Baseline/P00_step1_Baseline_lct_track_Baseline_20261017-133031_lct.csv,2999.108,0.4819,0.3517,22,30,0,1,0.375,0.0,0.375,0.375,0,0.2068,0.2068,0.0,10060,55.4719,100.0,7.6
+P00,2,Drehknopf,lct_track_dualtask_1,logs/P00/Drehknopf/P00_step2_Drehknopf_lct_track_dualtask_1_20261017-133548_lct.csv,2999.804,1.5359,1.4481,22,30,1,32,2.1582,3.2033,18.118,69.064,11,32.3566,34.4841,0.0,11249,52.714,100.0,7.6
+P00,4,MultiKnob,lct_track_dualtask_3,logs/P00/MultiKnob/P00_step4_MultiKnob_lct_track_dualtask_3_20261017-135210_lct.csv,2999.359,1.2434,1.149,22,30,1,18,2.6321,1.7863,7.279,47.377,9,26.0684,26.0684,0.0,9540,52.4978,100.0,7.5
+P00,3,Touch,lct_track_dualtask_2,logs/P00/Touch/P00_step3_Touch_lct_track_dualtask_2_20261017-134749_lct.csv,2999.658,1.7796,1.7349,22,30,4,38,1.5213,1.0985,4.098,57.809,13,31.7606,31.7606,0.0,9859,54.1745,100.0,7.5

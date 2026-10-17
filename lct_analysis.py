@@ -39,8 +39,8 @@ import re
 import statistics
 
 # Querposition (pos_y_norm) der Spurmitten. pos_y_norm = carla_y + 7.55,
-# Spurbreite 3.775 m. In CARLA zeigt +y nach RECHTS -> 'Left' = kleines y.
-LANE_WIDTH = 3.775
+# Spurbreite 3.85 m (ISO 26022 & OpenDRIVE). In CARLA zeigt +y nach RECHTS -> 'Left' = kleines y.
+LANE_WIDTH = 3.85
 LANE_CENTER = {'Left': 0.5 * LANE_WIDTH,
                'Middle': 1.5 * LANE_WIDTH,
                'Right': 2.5 * LANE_WIDTH}

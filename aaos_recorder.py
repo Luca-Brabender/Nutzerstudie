@@ -376,3 +376,57 @@ def set_knob_service_mode(device_ip="192.168.0.103", port=5555, standard_rotary=
     except Exception as e:
         print(f"[KNOB SERVICE WARNHINWEIS] Konnte Modus nicht an KnobService senden: {e}")
         return False
+
+
+def reset_aaos_app_grid(device_ip="192.168.0.103", port=5555):
+    """Setzt nach einem Streckenwechsel oder vor dem Start einer Fahrt
+    den Bildschirm von Android Automotive automatisch auf das App-Grid zurück
+    und aktiviert den Rotary-Fokus auf das erste Element.
+    
+    Funktioniert ohne Änderungen am AAOS-Build direkt über ADB.
+    """
+    device_serial = f"{device_ip}:{port}"
+    try:
+        subprocess.run(["adb", "connect", device_serial], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+
+        # 1. Menü-App (App-Grid) in den Vordergrund holen und Task-Stack zurücksetzen
+        cmd = [
+            "adb", "-s", device_serial, "shell",
+            "am", "start", "-n", "com.example.menuapp/.MainActivity",
+            "-f", "0x14000000"  # FLAG_ACTIVITY_NEW_TASK | FLAG_ACTIVITY_CLEAR_TOP
+        ]
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+
+        # Fallback auf Standard AAOS AppGrid, falls menuapp nicht antwortet
+        if res.returncode != 0 or "Error" in res.stderr:
+            subprocess.run([
+                "adb", "-s", device_serial, "shell",
+                "am", "start", "-n", "com.android.car.carlauncher/.AppGridActivity"
+            ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=4)
+
+        time.sleep(0.3)
+
+        # 2. Fokus auf das App-Grid aktivieren:
+        # In Android Automotive schaltet ein Richtungs-Event den Touch-Modus aus
+        # und setzt den Fokusrahmen (Rotary Highlight) direkt auf das erste App-Icon
+        subprocess.run([
+            "adb", "-s", device_serial, "shell",
+            "input", "keyevent", "KEYCODE_DPAD_DOWN"
+        ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+
+        print(f"[AAOS] App-Grid im Vordergrund & Fokus auf Raster gesetzt ({device_serial}).")
+        return True
+    except Exception as e:
+        print(f"[AAOS WARNHINWEIS] Konnte App-Grid-Fokus nicht setzen: {e}")
+        return False
+
+
+if __name__ == '__main__':
+    import argparse
+    parser = argparse.ArgumentParser(description="AAOS Steuerung & Hardware-Check")
+    parser.add_argument('--ip', default='192.168.0.103', help='IP-Adresse des Raspberry Pi 4')
+    parser.add_argument('--reset-grid', action='store_true', help='Fokus und App-Grid auf AAOS jetzt zurücksetzen')
+    args = parser.parse_args()
+
+    setup_external_hardware(device_ip=args.ip)
+    reset_aaos_app_grid(device_ip=args.ip)

@@ -35,7 +35,7 @@ from carla import ColorConverter as cc
 import cv2
 from lct_logger import LCTLogger
 from lct_sign_manager import ALL_SEQUENCES
-from aaos_recorder import AAOSRecorder, setup_external_hardware, set_knob_service_mode
+from aaos_recorder import AAOSRecorder, setup_external_hardware, set_knob_service_mode, reset_aaos_app_grid
 from wheel_feedback import WheelForceFeedback, apply_hardware_ffb
 from secondary_task_manager import SecondaryTaskManager, TaskHUDCard
 
@@ -127,7 +127,7 @@ def find_audi_blueprint(blueprint_library, actor_filter='vehicle.audi.*'):
 
 class World(object):
 
-    def __init__(self, carla_world, hud, actor_filter):
+    def __init__(self, carla_world, hud, actor_filter, cam_z=1.35):
         self.world = carla_world
         self.hud = hud
         self.player = None
@@ -138,6 +138,7 @@ class World(object):
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
         self._actor_filter = actor_filter
+        self.cam_z = cam_z
         self.restart()
         self.world.on_tick(hud.on_world_tick)
 
@@ -178,7 +179,7 @@ class World(object):
         self.collision_sensor = CollisionSensor(self.player, self.hud)
         self.lane_invasion_sensor = LaneInvasionSensor(self.player, self.hud)
         self.gnss_sensor = GnssSensor(self.player)
-        self.camera_manager = CameraManager(self.player, self.hud)
+        self.camera_manager = CameraManager(self.player, self.hud, cam_z=self.cam_z)
         self.camera_manager.transform_index = cam_pos_index
         self.camera_manager.set_sensor(cam_index, notify=False)
         actor_type = get_actor_display_name(self.player)
@@ -328,6 +329,15 @@ class DualControl(object):
             if getattr(args, 'min_force', None) is not None:
                 ffb_kwargs['min_force'] = args.min_force
 
+        self._steer_deadzone = 0.015
+        if wheel_section and self._parser.has_option(wheel_section, 'steering_deadzone'):
+            try:
+                self._steer_deadzone = float(self._parser.get(wheel_section, 'steering_deadzone'))
+            except Exception:
+                pass
+        if args is not None and getattr(args, 'steering_deadzone', None) is not None:
+            self._steer_deadzone = float(args.steering_deadzone)
+
         try:
             self._ffb = WheelForceFeedback(**ffb_kwargs)
         except Exception as e:
@@ -440,8 +450,17 @@ class DualControl(object):
             for i in range(self._joystick.get_numbuttons())
         ]
 
-        K1 = 1.0
-        steerCmd = K1 * math.tan(1.1 * jsInputs[self._steer_idx])
+        raw_steer = jsInputs[self._steer_idx]
+        dz = getattr(self, '_steer_deadzone', 0.012)
+        if abs(raw_steer) <= dz:
+            steerCmd = 0.0
+        else:
+            steer_sign = 1.0 if raw_steer > 0 else -1.0
+            norm_steer = (abs(raw_steer) - dz) / (1.0 - dz)
+            # Reales Pkw-Lenkgetriebe (Audi):
+            # 85% linear + 15% sanfte Progression am Rand, ohne künstlichen Tangens-Knick
+            pkw_steer = 0.85 * norm_steer + 0.15 * (norm_steer ** 3)
+            steerCmd = steer_sign * min(1.0, max(0.0, pkw_steer))
 
         K2 = 1.6
         throttleCmd = (
@@ -495,7 +514,7 @@ class DualControl(object):
 
 class HUD(object):
 
-    def __init__(self, width, height):
+    def __init__(self, width, height, show_info=False, show_notifications=False):
         self.dim = (width, height)
         font = pygame.font.Font(pygame.font.get_default_font(), 20)
         font_name = 'courier' if os.name == 'nt' else 'mono'
@@ -510,7 +529,8 @@ class HUD(object):
         self.server_fps = 0
         self.frame = 0
         self.simulation_time = 0
-        self._show_info = True
+        self._show_info = show_info
+        self._show_notifications = show_notifications
         self._info_text = []
         self._server_clock = pygame.time.Clock()
 
@@ -596,14 +616,20 @@ class HUD(object):
         self._show_info = not self._show_info
 
     def notification(self, text, seconds=2.0):
-        self._notifications.set_text(text, seconds=seconds)
+        if self._show_notifications:
+            self._notifications.set_text(text, seconds=seconds)
 
     def error(self, text):
-        self._notifications.set_text('Error: %s' % text, (255, 0, 0))
+        if self._show_notifications:
+            self._notifications.set_text('Error: %s' % text, (255, 0, 0))
 
     def show_task_prompt(self, app_name, duration=7.0):
         """Blendet die Sekundäraufgaben-Kachel oben zentriert ein."""
         self.task_card.show(app_name, duration=duration)
+
+    def show_task_completed(self, app_name, duration_s, success=True, display_duration=2.0):
+        """Blendet die Kachel mit Erledigt-Status (grün) und TCT-Dauer ein."""
+        self.task_card.show_completed(app_name, duration_s, success=success, display_duration=display_duration)
 
     def clear_task_prompt(self):
         """Entfernt die Sekundäraufgaben-Kachel sofort vom Bildschirm."""
@@ -656,7 +682,8 @@ class HUD(object):
                     surface = self._font_mono.render(item, True, (255, 255, 255))
                     display.blit(surface, (8, v_offset))
                 v_offset += 18
-        self._notifications.render(display)
+        if self._show_notifications:
+            self._notifications.render(display)
         self.help.render(display)
         self.task_card.render(display)
 
@@ -858,7 +885,7 @@ class GnssSensor(object):
 
 class CameraManager(object):
 
-    def __init__(self, parent_actor, hud):
+    def __init__(self, parent_actor, hud, cam_z=1.35):
         self.sensor = None
         self.surface = None
         self._parent = parent_actor
@@ -868,7 +895,7 @@ class CameraManager(object):
             carla.Transform(
                 carla.Location(x=-5.5, z=2.8), carla.Rotation(pitch=-15)
             ),
-            carla.Transform(carla.Location(x=1.6, z=1.7)),
+            carla.Transform(carla.Location(x=1.6, z=float(cam_z))),
         ]
         self.transform_index = 1
         self.sensors = [
@@ -1211,6 +1238,53 @@ def show_study_finished_screen(display, participant, total_steps):
         clock.tick(30)
 
 
+def show_loading_screen(display, text="Simulation wird vorbereitet...",
+                        subtext="Bitte einen kurzen Moment Geduld...",
+                        step_num=None, total_steps=None, method=None):
+    """Zeigt einen ansprechenden Ladebildschirm während Map-Laden oder Methodenwechsel."""
+    font_large = pygame.font.Font(pygame.font.get_default_font(), 30)
+    font_medium = pygame.font.Font(pygame.font.get_default_font(), 22)
+    font_small = pygame.font.Font(pygame.font.get_default_font(), 16)
+
+    bg_color = (20, 24, 33)
+    header_color = (35, 55, 95)
+    card_bg = (32, 38, 52)
+    accent_color = (100, 180, 255)
+
+    w, h = display.get_size()
+    display.fill(bg_color)
+
+    # Header Leiste
+    pygame.draw.rect(display, header_color, (0, 0, w, 70))
+    header_title = "LCT STUDIE: LÄDT..."
+    if step_num is not None and total_steps is not None:
+        header_title = f"LCT STUDIE  |  SCHRITT {step_num} VON {total_steps}"
+    title = font_large.render(header_title, True, (255, 255, 255))
+    display.blit(title, (w // 2 - title.get_width() // 2, 20))
+
+    # Zentrale Info-Box
+    box_w = min(860, w - 80)
+    box_h = 170
+    box_x = w // 2 - box_w // 2
+    box_y = h // 2 - box_h // 2
+    pygame.draw.rect(display, card_bg, (box_x, box_y, box_w, box_h), border_radius=10)
+    pygame.draw.rect(display, accent_color, (box_x, box_y, box_w, box_h), width=2, border_radius=10)
+
+    t1 = font_large.render(text, True, accent_color)
+    display.blit(t1, (w // 2 - t1.get_width() // 2, box_y + 35))
+
+    t2 = font_medium.render(subtext, True, (220, 220, 220))
+    display.blit(t2, (w // 2 - t2.get_width() // 2, box_y + 85))
+
+    if method is not None:
+        m_lbl = method.label() if hasattr(method, 'label') else str(method)
+        t3 = font_small.render(f"Nächste Methode: {m_lbl}", True, (160, 190, 220))
+        display.blit(t3, (w // 2 - t3.get_width() // 2, box_y + 125))
+
+    pygame.event.pump()
+    pygame.display.flip()
+
+
 def next_sign_idx(x):
     """Index des nächsten Schildes (wie im LCTLogger: Schilder bei 150, 300, ... m)."""
     idx = int(max(0.0, x) // SIGN_SPACING_M)
@@ -1292,12 +1366,17 @@ def game_loop(args):
     methods_for_run = resolve_study_methods(args.participant, order, getattr(args, 'methods', None))
     current_method = methods_for_run[step]
 
-    # Ausgabe: logs/<Proband>/<Proband>_step<N>_<Methode>_<Map>_<Zeitstempel>_*.csv
+    # Ausgabe: logs/<Proband>/<Methode>/<Proband>_step<N>_<Methode>_<Map>_<Zeitstempel>_*.csv
     participant_dir = os.path.join(args.log_dir, args.participant)
     os.makedirs(participant_dir, exist_ok=True)
+    # Alle 4 Methoden-Ordner direkt einrichten
+    for m in TaskMethod:
+        os.makedirs(os.path.join(participant_dir, m.value), exist_ok=True)
+
+    method_dir = os.path.join(participant_dir, current_method.value)
     stamp = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     run_prefix = os.path.join(
-        participant_dir,
+        method_dir,
         '%s_step%d_%s_%s_%s' % (args.participant, step + 1, current_method.value, current_map_name, stamp))
     events = StudyEvents(os.path.join(participant_dir, '%s_events.csv' % args.participant),
                          args.participant, step, current_map_name, method=current_method.value)
@@ -1310,10 +1389,27 @@ def game_loop(args):
     print('=' * 72 + '\n')
 
     # Sofortige Hardware-Konfiguration fuer das Logitech-Lenkrad (Zentrierfeder, Gain, Lenkwinkel)
-    # Damit hat das Lenkrad schon vor der Kalibrierung und dem Map-Laden das richtige Gefühl!
-    ac_val = getattr(args, 'autocenter', None) or 75
-    gain_val = getattr(args, 'ffb_gain', None) or 85
-    range_val = getattr(args, 'wheel_range', None) or 900
+    # Liest bevorzugt die Werte aus wheel_config.ini (Standard: 45% Autocenter, 75% Gain, 900 Grad)
+    cfg_parser = ConfigParser()
+    ini_path = os.path.join(SCRIPT_DIR, 'wheel_config.ini')
+    ac_default = 45
+    gain_default = 75
+    range_default = 900
+    if os.path.exists(ini_path):
+        cfg_parser.read(ini_path)
+        for sec in ['G27 Racing Wheel', 'Logitech G27 Racing Wheel', 'G29 Racing Wheel']:
+            if cfg_parser.has_section(sec):
+                if cfg_parser.has_option(sec, 'autocenter'):
+                    ac_default = int(cfg_parser.get(sec, 'autocenter'))
+                if cfg_parser.has_option(sec, 'overall_gain'):
+                    gain_default = int(cfg_parser.get(sec, 'overall_gain'))
+                if cfg_parser.has_option(sec, 'steering_range'):
+                    range_default = int(cfg_parser.get(sec, 'steering_range'))
+                break
+
+    ac_val = getattr(args, 'autocenter', None) or ac_default
+    gain_val = getattr(args, 'ffb_gain', None) or gain_default
+    range_val = getattr(args, 'wheel_range', None) or range_default
     apply_hardware_ffb(autocenter_pct=ac_val, gain_pct=gain_val, range_deg=range_val)
 
     # Nur beim allerersten Schritt den Hardware-Check ausführen
@@ -1331,7 +1427,55 @@ def game_loop(args):
         )
         events.log('knob_mode', f'standard_rotary={is_rotary}')
 
+        # Nach jedem Streckenwechsel: Fokus und App-Grid auf AAOS automatisch zurücksetzen
+        reset_aaos_app_grid(device_ip=getattr(args, 'aaos_ip', '192.168.0.103'))
+        events.log('aaos_app_grid_reset')
+
     try:
+        # Multi-Monitor-Unterstützung (z.B. Display 0 = Versuchsleiter, Display 1 = Proband)
+        display_idx = getattr(args, 'display_index', 0)
+        os.environ['SDL_VIDEO_FULLSCREEN_DISPLAY'] = str(display_idx)
+
+        # Native Monitorauflösung für den ausgewählten Bildschirm ermitteln falls 'auto'
+        if getattr(args, 'width', None) is None or getattr(args, 'height', None) is None:
+            info = pygame.display.Info()
+            target_w, target_h = info.current_w, info.current_h
+            if hasattr(pygame.display, 'get_desktop_sizes'):
+                try:
+                    desktop_sizes = pygame.display.get_desktop_sizes()
+                    if 0 <= display_idx < len(desktop_sizes):
+                        target_w, target_h = desktop_sizes[display_idx]
+                except Exception:
+                    pass
+            if not target_w or not target_h or target_w <= 0 or target_h <= 0:
+                target_w, target_h = 1920, 1080
+            args.width, args.height = target_w, target_h
+            print(f"[DISPLAY] Native Monitor-Auflösung auf Display {display_idx}: {args.width}x{args.height}")
+
+        flags = pygame.HWSURFACE | pygame.DOUBLEBUF
+        is_fullscreen = getattr(args, 'fullscreen', True)
+        if is_fullscreen:
+            flags |= pygame.FULLSCREEN
+
+        try:
+            display = pygame.display.set_mode((args.width, args.height), flags, display=display_idx)
+        except TypeError:
+            # Fallback für ältere Pygame-Versionen ohne display= Parameter
+            display = pygame.display.set_mode((args.width, args.height), flags)
+
+        pygame.mouse.set_visible(not is_fullscreen)
+        pygame.display.set_caption('LCT %s - Schritt %d/%d: %s [%s]' % (
+            args.participant, step + 1, len(order), current_map_name, current_method.value))
+
+        show_loading_screen(
+            display,
+            text=f"Lade Strecke: {current_map_name}...",
+            subtext="Simulation wird vorbereitet – bitte einen kurzen Moment Geduld...",
+            step_num=step + 1,
+            total_steps=len(order),
+            method=current_method
+        )
+
         client = carla.Client(args.host, args.port)
         client.set_timeout(10.0)
 
@@ -1349,12 +1493,14 @@ def game_loop(args):
         for s in existing_world.get_actors().filter('sensor.*'):
             s.destroy()
 
-        flags = pygame.HWSURFACE | pygame.DOUBLEBUF
-        if args.fullscreen:
-            flags |= pygame.FULLSCREEN
-        display = pygame.display.set_mode((args.width, args.height), flags)
-        pygame.display.set_caption('LCT %s - Schritt %d/%d: %s [%s]' % (
-            args.participant, step + 1, len(order), current_map_name, current_method.value))
+        show_loading_screen(
+            display,
+            text="Initialisiere Sensoren & Fahrzeug...",
+            subtext="Gleich geht es weiter...",
+            step_num=step + 1,
+            total_steps=len(order),
+            method=current_method
+        )
 
         # ------------------------------------------------------------------
         # Eyetracking: Server starten, (Re-)Kalibrierung vor jeder Fahrt
@@ -1362,7 +1508,12 @@ def game_loop(args):
         clf = None
         gaze_cfg = None
         if not args.no_gaze:
-            gaze = GazeServer()
+            backend = getattr(args, 'gaze_backend', 'webgazer').lower()
+            if backend == 'eyetrax':
+                from eyetrax_tracker import EyeTraxTracker
+                gaze = EyeTraxTracker(camera_idx=getattr(args, 'eyetrax_camera', 0))
+            else:
+                gaze = GazeServer()
             gaze.start()
             gaze_cfg = load_config(args.gaze_config)
             geo = Geometry(gaze_cfg, args.width, args.height)
@@ -1384,9 +1535,13 @@ def game_loop(args):
                 events.log('gaze_disabled', 'Kalibrierung übersprungen/abgebrochen')
                 gaze = None
 
-        hud = HUD(args.width, args.height)
+        hud = HUD(
+            args.width, args.height,
+            show_info=getattr(args, 'show_hud', False),
+            show_notifications=getattr(args, 'show_notifications', False)
+        )
         hud.current_method_name = current_method.value
-        world = World(client.get_world(), hud, args.filter)
+        world = World(client.get_world(), hud, args.filter, cam_z=getattr(args, 'cam_z', 1.35))
         controller = DualControl(world, args.autopilot, args=args)
 
         # LCT Logger Instanz erzeugen
@@ -1400,7 +1555,7 @@ def game_loop(args):
         aaos_recorder = None
         if not getattr(args, 'no_aaos', False):
             aaos_recorder = AAOSRecorder(
-                output_dir=participant_dir,
+                output_dir=method_dir,
                 device_ip=getattr(args, 'aaos_ip', '192.168.0.103'),
                 max_fps=60,
                 bit_rate="2M",
@@ -1412,7 +1567,7 @@ def game_loop(args):
         if not getattr(args, 'no_secondary_tasks', False):
             raw_apps = getattr(args, 'secondary_apps', None)
             custom_apps = [x.strip() for x in raw_apps.split(',') if x.strip()] if (raw_apps and raw_apps.strip()) else None
-            force_enable = getattr(args, 'force_secondary_tasks', False) or (raw_apps is not None)
+            force_enable = bool(getattr(args, 'debug_mode', False) or getattr(args, 'force_secondary_tasks', False))
             secondary_task_mgr = SecondaryTaskManager(
                 method=current_method,
                 hud=hud,
@@ -1422,6 +1577,12 @@ def game_loop(args):
                 duration=getattr(args, 'secondary_task_duration', 7.0),
                 app_list=custom_apps,
                 force_enable=force_enable,
+                device_ip=getattr(args, 'aaos_ip', '192.168.0.103'),
+                no_aaos=getattr(args, 'no_aaos', False),
+                run_prefix=run_prefix,
+                trigger_interval=getattr(args, 'secondary_task_interval', 300.0),
+                trigger_start=getattr(args, 'secondary_task_start', 225.0),
+                locations_str=getattr(args, 'secondary_task_locations', None),
             )
 
         # Bereit-Bildschirm vor Fahrtbeginn anzeigen (Versuchsleiter/Proband bestätigen Start)
@@ -1440,7 +1601,7 @@ def game_loop(args):
         last_status_push = 0.0
 
         # Variablen fuer Out-of-Bounds / Map-Absturz Recovery (Teleport zurueck auf die Fahrbahn)
-        MIDDLE_LANE_Y = -1.8875  # Mitte der mittleren Spur in CARLA (ISO 26022, pos_y_norm = 5.6625 m)
+        MIDDLE_LANE_Y = -1.775  # Mitte der mittleren Spur in CARLA (ISO 26022: 3.85m Spuren, pos_y_norm = 5.775 m)
         last_safe_x = 0.0
         last_safe_z = None
         last_safe_speed_kmh = 50.0
@@ -1486,8 +1647,16 @@ def game_loop(args):
             if world is not None and getattr(world, 'lane_invasion_sensor', None) is not None:
                 invasion_event = world.lane_invasion_sensor.pop_event()
 
-            # 2. Logger genau EINMAL pro Frame updaten & Blickdaten direkt übergeben
+            if invasion_event != "None":
+                events.log('lane_invasion', invasion_event)
+
+            # 2. Logger genau EINMAL pro Frame updaten & Blick- sowie Aufgabendaten übergeben
             if lct_logger is not None:
+                task_act, task_tgt = (
+                    secondary_task_mgr.get_active_task_status()
+                    if secondary_task_mgr is not None
+                    else (0, "None")
+                )
                 lct_logger.update(
                     world,
                     current_sequence,
@@ -1495,6 +1664,8 @@ def game_loop(args):
                     gaze_x=gaze_x,
                     gaze_y=gaze_y,
                     gaze_state=gaze_state,
+                    task_active=task_act,
+                    task_target=task_tgt,
                 )
 
             if player_loc is not None and world.player is not None:
@@ -1601,7 +1772,21 @@ def game_loop(args):
                     next_step = step + 1
                     if next_step < len(order):
                         next_map_name = RUN_MAPS[order[next_step]]
+                        next_method = methods_for_run[next_step]
                         print(f"[LCT STUDY] Wechsle zu Schritt {next_step + 1}: {next_map_name}...")
+
+                        show_loading_screen(
+                            display,
+                            text="Fahrt abgeschlossen! Nächste Strecke wird vorbereitet...",
+                            subtext=f"Bitte kurz warten – Schritt {next_step + 1} von {len(order)} lädt.",
+                            step_num=next_step + 1,
+                            total_steps=len(order),
+                            method=next_method
+                        )
+                        # AAOS App-Grid und Fokus schon während des Streckenwechsels im Hintergrund zurücksetzen
+                        if not getattr(args, 'no_aaos', False):
+                            reset_aaos_app_grid(device_ip=getattr(args, 'aaos_ip', '192.168.0.103'))
+                        pygame.time.wait(800)
 
                         if world is not None:
                             world.destroy()
@@ -1633,6 +1818,12 @@ def game_loop(args):
 
         if gaze_rec is not None:
             gaze_rec.close(t_end=time.time())
+
+        if gaze is not None and hasattr(gaze, 'stop'):
+            try:
+                gaze.stop()
+            except Exception:
+                pass
 
         if aaos_recorder is not None and recording_triggered:
             aaos_recorder.stop()
@@ -1680,12 +1871,28 @@ def main():
     argparser.add_argument(
         '--res',
         metavar='WIDTHxHEIGHT',
-        default='1280x720',
-        help='window resolution (default: 1280x720)',
+        default='auto',
+        help='Fenster-/Vollbildauflösung (Standard: "auto" für native Monitorauflösung, oder z.B. 1920x1080, 1280x720)',
     )
     argparser.add_argument(
-        '--fullscreen', action='store_true',
-        help='Vollbild (empfohlen; --res sollte dann der Monitorauflösung entsprechen)',
+        '--fullscreen', dest='fullscreen', action='store_true', default=True,
+        help='Vollbildmodus auf dem Zielmonitor aktivieren (Standard: aktiviert)',
+    )
+    argparser.add_argument(
+        '--windowed', '--no-fullscreen', dest='fullscreen', action='store_false',
+        help='Fenstermodus statt Vollbild verwenden (nützlich für Entwicklung/Debugging)',
+    )
+    argparser.add_argument(
+        '--display', dest='display_index', type=int, default=0,
+        help='Monitor-Index für Mehrschirm-Setups (0 = Hauptbildschirm, 1 = Probanden-Display)',
+    )
+    argparser.add_argument(
+        '--show-hud', action='store_true',
+        help='Statistik-Konsole links einblenden (Standard: ausgeblendet für Probanden)',
+    )
+    argparser.add_argument(
+        '--show-notifications', action='store_true',
+        help='Benachrichtigungen unten einblenden (Standard: ausgeblendet für Probanden)',
     )
     argparser.add_argument(
         '--filter',
@@ -1722,6 +1929,14 @@ def main():
         help='Ohne Eyetracking fahren',
     )
     argparser.add_argument(
+        '--gaze-backend', dest='gaze_backend', choices=['webgazer', 'eyetrax'], default='webgazer',
+        help='Eyetracking-Backend: "webgazer" (Standard, Browser-basiert) oder "eyetrax" (nativ in Python)',
+    )
+    argparser.add_argument(
+        '--eyetrax-camera', dest='eyetrax_camera', type=int, default=0,
+        help='Kamera-Index für EyeTrax (Standard: 0)',
+    )
+    argparser.add_argument(
         '--gaze-config', dest='gaze_config',
         default=os.path.join(SCRIPT_DIR, 'gaze_config.json'),
         help='JSON mit Monitor- und Headunit-Geometrie',
@@ -1744,39 +1959,65 @@ def main():
     )
     argparser.add_argument(
         '--center-spring', type=int, default=None,
-        help='Progressive Zentrierkraft um die Nulllage in %% (0-100, Standard: 55)',
+        help='Progressive Zentrierkraft um die Nulllage in %% (0-100, Standard: 30)',
     )
     argparser.add_argument(
         '--min-force', type=int, default=None,
-        help='Mindestkraft / Anti-Deadzone gegen Getriebespiel in %% (0-100, Standard: 12)',
+        help='Mindestkraft / Anti-Deadzone gegen Getriebespiel in %% (0-100, Standard: 8)',
     )
     argparser.add_argument(
         '--ffb-gain', type=int, default=None,
-        help='Gesamtkraft (Gain) des Lenkradmotors in %% (0-100, Standard: 85 in wheel_config.ini)',
+        help='Gesamtkraft (Gain) des Lenkradmotors in %% (0-100, Standard: 75 in wheel_config.ini)',
     )
     argparser.add_argument(
         '--wheel-range', type=int, default=None,
         help='Maximaler Lenkwinkel in Grad (Standard: 900 in wheel_config.ini)',
     )
     argparser.add_argument(
+        '--steering-deadzone', type=float, default=None,
+        help='Ruhezone / Deadzone um die Nulllage (z.B. 0.015 = 1.5%%, Standard in wheel_config.ini)',
+    )
+    argparser.add_argument(
         '--no-secondary-tasks', action='store_true',
         help='Sekundäraufgaben (Signalton + HUD-Kachel) deaktivieren',
     )
     argparser.add_argument(
-        '--force-secondary-tasks', action='store_true',
-        help='Sekundäraufgaben auch bei der Baseline-Fahrt (z.B. für schnelle Tests) erzwingen',
+        '--debug-mode', '--force-secondary-tasks', action='store_true', dest='debug_mode',
+        help='Debug-Modus: Sekundäraufgaben auch während der Baseline-Fahrt (z.B. für schnelle Tests) aktivieren',
     )
     argparser.add_argument(
         '--secondary-task-duration', type=float, default=7.0,
         help='Anzeigedauer der HUD-Kachel in Sekunden (Standard: 7.0s)',
     )
     argparser.add_argument(
+        '--secondary-task-interval', type=float, default=300.0,
+        help='Abstand zwischen Aufgaben in Metern (Standard: 300.0m = 9 Aufgaben, z.B. 450.0m = 6 Aufgaben)',
+    )
+    argparser.add_argument(
+        '--secondary-task-start', type=float, default=225.0,
+        help='Erster Streckenpunkt für Aufgaben in Metern (Standard: 225.0m)',
+    )
+    argparser.add_argument(
+        '--secondary-task-locations', default=None,
+        help='Optionale explizite Streckenpunkte als Liste (z.B. "225,675,1125,1575,2025,2475")',
+    )
+    argparser.add_argument(
         '--secondary-apps', nargs='?', const='', default=None,
         help='Optionale kommaseparierte Liste von App-Namen für Sekundäraufgaben (z.B. "Kamera,Kalender,Radio"). Kann auch als Flag ohne Wert angegeben werden.',
     )
+    argparser.add_argument(
+        '--cam-z', type=float, default=1.35,
+        help='First-Person Kamerahöhe (z-Achse in Metern) im Audi Cockpit (Standard: 1.35m, zuvor 1.70m)',
+    )
     args = argparser.parse_args()
 
-    args.width, args.height = [int(x) for x in args.res.split('x')]
+    if args.res.lower() == 'auto':
+        if not args.fullscreen:
+            args.width, args.height = 1280, 720
+        else:
+            args.width, args.height = None, None
+    else:
+        args.width, args.height = [int(x) for x in args.res.split('x')]
     args.order_list = [int(x) for x in args.order.split(',') if x.strip() != '']
     for idx in args.order_list:
         if not 0 <= idx < len(RUN_MAPS):

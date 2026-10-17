@@ -85,19 +85,32 @@ class GazeCalibration(object):
 
     # ============================================================ phases
     def _wait_for_browser(self):
-        url = 'http://localhost:%d/gaze_tracker.html' % self.gaze.http_port
+        backend = getattr(self.gaze, 'backend_name', 'WebGazer')
+        is_direct = getattr(self.gaze, 'is_direct_camera', False)
+        http_port = getattr(self.gaze, 'http_port', 8000) or 8000
+        url = 'http://localhost:%d/gaze_tracker.html' % http_port
         while True:
             self._events()
             rate = self.gaze.sample_rate()
             ok = self.gaze.connected and rate >= 5
-            self._screen(['Eyetracking (WebGazer)',
-                          '',
-                          'Browser-Tab öffnen: %s' % url,
-                          'Verbunden: %s   |   Samplerate: %.0f Hz' %
-                          ('ja' if self.gaze.connected else 'nein', rate),
-                          '',
-                          '[ENTER] weiter zur Kalibrierung' if ok else 'Warte auf Verbindung & Gesichtserkennung ...',
-                          '[ESC] ohne Eyetracking fortfahren'])
+            if is_direct:
+                self._screen(['Eyetracking (%s)' % backend,
+                              '',
+                              'Kamera-Initialisierung (OpenCV / Python)...',
+                              'Kamera bereit: %s   |   Samplerate: %.0f Hz' %
+                              ('ja' if self.gaze.connected else 'nein (warten)', rate),
+                              '',
+                              '[ENTER] weiter zur Kalibrierung' if ok else 'Warte auf Kamera & Gesichtserkennung ...',
+                              '[ESC] ohne Eyetracking fortfahren'])
+            else:
+                self._screen(['Eyetracking (%s)' % backend,
+                              '',
+                              'Browser-Tab öffnen: %s' % url,
+                              'Verbunden: %s   |   Samplerate: %.0f Hz' %
+                              ('ja' if self.gaze.connected else 'nein', rate),
+                              '',
+                              '[ENTER] weiter zur Kalibrierung' if ok else 'Warte auf Verbindung & Gesichtserkennung ...',
+                              '[ESC] ohne Eyetracking fortfahren'])
             for k in self._keys():
                 if k == pygame.K_ESCAPE:
                     raise _Abort()

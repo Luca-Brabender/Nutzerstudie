@@ -209,44 +209,53 @@ class WheelForceFeedback:
             print(f"[WHEEL FFB] evdev FF_CONSTANT Initialisierung: {e} (Hardware-Zentrierung bleibt aktiv)")
 
     def update(self, steer, speed_kmh, lateral_accel=0.0):
-        """Berechnet dynamische Zusatzkraefte fuer festen Geradeauslauf und realistische Spurwechsel."""
+        """Berechnet dynamische Zusatzkraefte fuer ein realistisches Pkw-Lenkgefuehl (Audi A2)."""
         if not self.is_active or self.dev is None or self.effect_id is None:
             return
 
         now = time.time()
-        dt = max(0.001, now - self.last_time)
+        dt = max(0.001, min(0.05, now - self.last_time))
         steer_velocity = (steer - self.last_steer) / dt
         self.last_steer = steer
         self.last_time = now
 
-        # Geschwindigkeits-Skalierung: Bei 60 km/h (LCT-Vorgabe) voll aktiv
-        speed_factor = min(1.0, max(0.20, speed_kmh / 50.0))
+        # Geschwindigkeits-Skalierung (Servotronic-Prinzip):
+        # Bei Stillstand (0 km/h): leichtgängig (Einparkhilfe)
+        # Bei 60 km/h (LCT-Fahrt): stabiler, satter Geradeauslauf
+        speed_factor = min(1.0, max(0.25, speed_kmh / 50.0))
 
         abs_steer = abs(steer)
         sign_steer = 1.0 if steer > 0.0 else (-1.0 if steer < 0.0 else 0.0)
 
-        # 1. Anti-Deadzone / Mindestkraft gegen das mechanische Logitech-Getriebetotband:
-        # Sobald das Lenkrad aus der Mitte bewegt wird, erzeugt der Motor sofort spuerbaren Widerstand
-        deadzone_ramp = min(1.0, abs_steer / 0.035) if abs_steer > 0.001 else 0.0
+        # 1. Anti-Deadzone / Mindestkraft (überwindet das mechanische Totband der Logitech-Zahnräder)
+        deadzone_ramp = min(1.0, abs_steer / 0.03) if abs_steer > 0.001 else 0.0
         t_deadzone = -sign_steer * (self.min_force * deadzone_ramp) * speed_factor
 
-        # 2. Feste progressive Rueckstellkraft um die Nulllage (Nachlauf / Caster-Effekt):
-        # Steile Kennlinie (Potenz 0.65) gibt dem Lenkrad bei Geradeausfahrt sicheren, stabilen Halt
-        curve = math.pow(abs_steer, 0.65) if abs_steer > 0.001 else 0.0
+        # 2. Physikalisches Rückstellmoment (Caster Trail / Nachlauf):
+        # Harmonisch progressive Kurve (85% linear + 15% quadratisch) für natürliches Selbstzentrieren
+        curve = 0.85 * abs_steer + 0.15 * (abs_steer ** 2)
         t_center = -sign_steer * curve * self.center_spring * speed_factor
 
-        # 3. Zusaetzlicher Widerstand bei weiteren Lenkwinkeln (Kurvenlast / Spurwechsel)
-        t_lateral = -steer * 0.20 * speed_factor
+        # 3. Dynamische Reifenhaftung & Querkraft (Tire Cornering Force Feedback):
+        # Wenn das Fahrzeug in den Spurwechsel lenkt, baut sich spürbare Gegenkraft durch die Fliehkraft auf
+        norm_lat = max(-1.0, min(1.0, lateral_accel / (9.81 * 0.40)))
+        t_lateral = -norm_lat * 0.22 * speed_factor
 
-        # 4. Dynamische Daempfung (verhindert Nervositaet, Zittern und Aufschwingen beim Spurhalten)
-        t_damping = -steer_velocity * self.damping_strength * 0.04
+        # 4. Hydraulische Lenkdämpfung (Viscous Damping):
+        # Dämpft schnelles Schwingen und Überschwingen beim Loslassen; ermöglicht sanftes Gleiten zur Nulllage
+        t_damping = -steer_velocity * self.damping_strength * 0.05
 
-        # 5. Grundreibung (verleiht der Lenksaeule mechanisches Gewicht)
+        # 5. Mechanische Grundreibung der Lenksäule
         vel_dir = 1.0 if steer_velocity > 0.0 else (-1.0 if steer_velocity < 0.0 else 0.0)
-        t_friction = -vel_dir * min(0.10, abs(steer_velocity) * 4.0) * self.friction_strength
+        t_friction = -vel_dir * min(0.08, abs(steer_velocity) * 3.0) * self.friction_strength
+
+        # 6. Feine Straßen-Mikrotextur (Asphalt-Rückmeldung ab 20 km/h)
+        t_road = 0.0
+        if speed_kmh > 20.0:
+            t_road = math.sin(now * 40.0) * 0.010 * speed_factor
 
         # Gesamtdrehmoment mit Gesamt-Gain gewichten
-        t_total = (t_center + t_deadzone + t_lateral + t_damping + t_friction) * self.overall_gain
+        t_total = (t_center + t_deadzone + t_lateral + t_damping + t_friction + t_road) * self.overall_gain
 
         if self.anti_clipping:
             compressed = math.tanh(t_total)

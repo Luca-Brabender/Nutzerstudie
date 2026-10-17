@@ -62,6 +62,8 @@ class GazeServer(object):
         self.browser_info = {}           # Infos aus der 'hello'-Nachricht
         self.calib_samples = 0           # Anzahl Trainingssamples im WebGazer-Modell
         self._rate_window = collections.deque(maxlen=120)
+        self.backend_name = 'WebGazer'
+        self.is_direct_camera = False
 
     # ------------------------------------------------------------------ start
     def start(self):
